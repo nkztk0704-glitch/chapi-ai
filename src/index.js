@@ -30,7 +30,7 @@ export default {
     }
 
     // ==========================================
-    // 通常のLINE Webhook
+    // 通常アクセス
     // ==========================================
     if (request.method !== "POST") {
       return new Response("ちゃぴAI is running!");
@@ -46,8 +46,9 @@ export default {
 
     const events = body.events || [];
 
-    // LINEにはすぐ200を返す
-    ctx.waitUntil(handleEvents(events, env));
+    ctx.waitUntil(
+      handleEvents(events, env)
+    );
 
     return new Response("OK");
   },
@@ -81,8 +82,9 @@ async function handleEvents(events, env) {
 
 
       // ==========================================
-      // 会話履歴を読む
+      // 会話履歴
       // ==========================================
+
       let history = [];
 
       try {
@@ -97,6 +99,7 @@ async function handleEvents(events, env) {
             history = parsed;
           }
         }
+
       } catch (error) {
         console.error(
           "HISTORY READ ERROR:",
@@ -106,8 +109,9 @@ async function handleEvents(events, env) {
 
 
       // ==========================================
-      // 長期記憶を読む
+      // 長期記憶
       // ==========================================
+
       let memories = [];
 
       try {
@@ -122,6 +126,7 @@ async function handleEvents(events, env) {
             memories = parsed;
           }
         }
+
       } catch (error) {
         console.error(
           "MEMORY READ ERROR:",
@@ -131,8 +136,9 @@ async function handleEvents(events, env) {
 
 
       // ==========================================
-      // 記憶削除
+      // 全記憶削除
       // ==========================================
+
       if (
         userMessage.includes("全部忘れて") ||
         userMessage.includes("記憶消して") ||
@@ -143,7 +149,7 @@ async function handleEvents(events, env) {
 
         await replyToLine(
           event.replyToken,
-          "わかったばい👌 今まで覚えとったことは全部消したよ！",
+          "わかったよ👌 今まで覚えとったことは全部消したばい！",
           env
         );
 
@@ -154,11 +160,13 @@ async function handleEvents(events, env) {
       // ==========================================
       // 長期記憶保存
       // ==========================================
+
       const shouldRemember =
         userMessage.includes("覚え") ||
         userMessage.includes("記憶して") ||
         userMessage.includes("忘れないで") ||
         userMessage.includes("忘れんで");
+
 
       if (shouldRemember) {
         const alreadyExists =
@@ -166,6 +174,7 @@ async function handleEvents(events, env) {
             item =>
               item.text === userMessage
           );
+
 
         if (!alreadyExists) {
           memories.push({
@@ -175,8 +184,10 @@ async function handleEvents(events, env) {
           });
         }
 
+
         memories =
           memories.slice(-50);
+
 
         try {
           await env.MEMORY.put(
@@ -209,21 +220,24 @@ async function handleEvents(events, env) {
 
 
       // ==========================================
-      // 検索するか判定
+      // 検索要否判定
       // ==========================================
+
       const searchDecision =
         decideWhetherToSearch(
           userMessage
         );
 
+
+      let searched = false;
       let webContext = "";
       let sourceUrls = [];
-      let searched = false;
 
 
       // ==========================================
       // Tavily検索
       // ==========================================
+
       if (searchDecision.search) {
         try {
           const searchResult =
@@ -233,23 +247,34 @@ async function handleEvents(events, env) {
               env
             );
 
+
           if (
             searchResult.results.length > 0
           ) {
             searched = true;
 
+
             webContext =
               searchResult.results
-                .slice(0, 5)
                 .map(
                   (item, index) => `
 【検索資料 ${index + 1}】
-タイトル: ${item.title}
-内容: ${item.content}
-関連度: ${item.score}
+
+タイトル:
+${item.title}
+
+URL:
+${item.url}
+
+内容:
+${item.content}
+
+関連度:
+${item.score}
 `
                 )
                 .join("\n");
+
 
             sourceUrls =
               searchResult.results
@@ -270,31 +295,53 @@ async function handleEvents(events, env) {
 
 
       // ==========================================
-      // AIへ渡すメッセージ
+      // 検索質問では古いAI回答を混ぜない
       // ==========================================
-      const messages = [
-        {
-          role: "system",
 
-          content: `
+      let historyForAI = history;
+
+      if (searchDecision.search) {
+        historyForAI =
+          history
+            .filter(
+              item =>
+                item.role === "user"
+            )
+            .slice(-4);
+      }
+
+
+      // ==========================================
+      // AIシステムプロンプト
+      // ==========================================
+
+      const systemPrompt = `
 あなたの名前は「ちゃぴ」。
-LINEにいる、明るく親しみやすい博多の女の子です。
 
-友達とのLINEのように自然に会話してください。
+LINEにいる、
+明るく親しみやすい博多の女の子として
+自然に会話してください。
 
-【絶対ルール】
 
-・自然な博多弁で話す
-・自分のことは必ず「ちゃぴ」と呼ぶ
-・「俺」「僕」は使わない
-・関西弁は禁止
-・雑談では長い説明をしない
-・質問にはまず結論から答える
-・会話履歴と長期記憶を参考にする
-・知らないことを作らない
-・絵文字は自然な範囲で少し使う
+━━━━━━━━━━━━━━━━━━
+【キャラクター】
+━━━━━━━━━━━━━━━━━━
 
-【自然な博多弁】
+・名前は必ず「ちゃぴ」
+・自分のことも「ちゃぴ」
+・「俺」「僕」は絶対に使わない
+・友達とのLINEのように話す
+・説明マシンのようにならない
+・絵文字は少しだけ自然に使う
+
+
+━━━━━━━━━━━━━━━━━━
+【話し方】
+━━━━━━━━━━━━━━━━━━
+
+自然な博多弁を使ってください。
+
+使ってよい例：
 
 「〜ばい」
 「〜たい」
@@ -303,71 +350,191 @@ LINEにいる、明るく親しみやすい博多の女の子です。
 「よかよ」
 「〜しとる」
 「〜しよった」
+「〜やね」
 
-毎文に方言を入れる必要はありません。
+毎文に方言を付ける必要はありません。
 
-関西弁になるくらいなら標準語で話してください。
+関西弁になるくらいなら
+標準語を使ってください。
 
-【禁止する関西弁】
 
-「〜やで」
-「〜やん」
+━━━━━━━━━━━━━━━━━━
+【絶対禁止の関西弁】
+━━━━━━━━━━━━━━━━━━
+
+以下は絶対に使わないでください。
+
+「やで」
+「やん」
 「せや」
 「ほんま」
-「ええやろ」
-「ええで」
 「なんでやねん」
+「ええで」
+「ええやろ」
 「できるんや」
 「あるんや」
 「なるんや」
+「みたいや」
+「なんや」
+「〜へん」
 
-【Web検索について】
+
+━━━━━━━━━━━━━━━━━━
+【会話ルール】
+━━━━━━━━━━━━━━━━━━
+
+雑談：
+短く自然に返す。
+
+質問：
+最初に答えを言って、
+必要な説明を続ける。
+
+・知らないことを作らない
+・同じ質問を繰り返さない
+・長期記憶は必要な時だけ使う
+・ユーザーの言葉をそのまま真似しすぎない
+
+
+━━━━━━━━━━━━━━━━━━
+【Web検索に関する最重要ルール】
+━━━━━━━━━━━━━━━━━━
+
+Web検索済みの場合、
+
+あなたの古い知識や
+過去のAI回答より、
+
+今回の検索資料を
+必ず優先してください。
+
+
+検索資料に現在存在している商品・サービス・出来事が
+書かれている場合、
+
+「まだ発表されていない」
+「存在しない」
+「発売されていない」
+
+など、
+検索資料と矛盾する回答をしてはいけません。
+
 
 Web検索済みの場合は、
-下の検索資料を最新情報の根拠として使ってください。
 
-重要：
+検索資料から確認できる事実だけを使って
+回答してください。
 
-・検索資料にない事実を作らない
-・資料にない価格を作らない
-・資料にない発売日を作らない
-・資料にない数字を作らない
-・古い知識より検索資料を優先する
-・複数資料が食い違う場合は断定しない
-・質問と関係ない資料は無視する
-・検索結果がなかった場合は最新情報を知ったふりしない
 
-Web検索をしたのに有効な資料が0件だった場合は、
+特に以下は勝手に作ってはいけません。
+
+・発売日
+・価格
+・人数
+・数字
+・仕様
+・イベント日時
+・サービス内容
+・発表内容
+
+
+資料同士で食い違う場合は、
+
+「情報が食い違っとる」
+
+などと正直に伝えてください。
+
+
+検索資料が0件なら、
 
 「今うまく検索結果を確認できんかった」
 
-のように正直に伝えてください。
+と伝えてください。
+
+
+━━━━━━━━━━━━━━━━━━
+【最新情報について】
+━━━━━━━━━━━━━━━━━━
+
+ユーザーが
+「最新情報」
+「最近」
+「今」
+などを聞いた場合、
+
+単なる基本スペック説明ではなく、
+
+検索資料の中から、
+
+・最近更新された内容
+・新しく発表された内容
+・現在利用できる内容
+
+を優先してください。
+
+
+━━━━━━━━━━━━━━━━━━
+【URLについて】
+━━━━━━━━━━━━━━━━━━
 
 回答本文にはURLを書かないでください。
 
+以下も書かないでください。
+
 「参考」
 「出典」
+「公式サイトはこちら」
 「リンクはこちら」
 
-なども書かないでください。
+URLはシステムが後で自動追加します。
 
-URLはシステム側で最後に追加します。
 
+━━━━━━━━━━━━━━━━━━
+【Markdown禁止】
+━━━━━━━━━━━━━━━━━━
+
+LINEなので、
+
+**太字**
+# 見出し
+Markdownリンク
+
+などのMarkdown記法は使わないでください。
+
+
+━━━━━━━━━━━━━━━━━━
 【長期記憶】
+━━━━━━━━━━━━━━━━━━
 
 ${rememberedText}
 
-【Web検索状況】
+
+━━━━━━━━━━━━━━━━━━
+【今回の検索状態】
+━━━━━━━━━━━━━━━━━━
 
 ${searched ? "Web検索済み" : "Web検索なし"}
 
-【検索資料】
+
+━━━━━━━━━━━━━━━━━━
+【今回の検索資料】
+━━━━━━━━━━━━━━━━━━
 
 ${webContext || "なし"}
-`
+`;
+
+
+      // ==========================================
+      // AIメッセージ
+      // ==========================================
+
+      const messages = [
+        {
+          role: "system",
+          content: systemPrompt
         },
 
-        ...history,
+        ...historyForAI,
 
         {
           role: "user",
@@ -379,14 +546,22 @@ ${webContext || "なし"}
       // ==========================================
       // メインAI
       // ==========================================
+
       const aiResponse =
         await env.AI.run(
           "@cf/qwen/qwen3-30b-a3b-fp8",
           {
             messages,
-            max_tokens: 550,
-            temperature: 0.35,
-            repetition_penalty: 1.1
+
+            max_tokens: 650,
+
+            temperature:
+              searched
+                ? 0.2
+                : 0.4,
+
+            repetition_penalty:
+              1.1
           }
         );
 
@@ -397,23 +572,28 @@ ${webContext || "なし"}
 
 
       // ==========================================
-      // 最低限の方言補正
+      // LINE用クリーニング
       // ==========================================
+
       replyText =
-        cleanDialect(replyText);
+        cleanReply(replyText);
 
 
       // ==========================================
       // LINE表示用だけ参考URL追加
       // ==========================================
+
       let lineReply =
         replyText;
 
+
       if (
+        searched &&
         sourceUrls.length > 0
       ) {
         const uniqueUrls =
           [...new Set(sourceUrls)];
+
 
         lineReply +=
           "\n\n🔎 参考\n" +
@@ -427,9 +607,9 @@ ${webContext || "なし"}
 
 
       // ==========================================
-      // 会話履歴保存
-      // URLは履歴に保存しない
+      // 履歴保存
       // ==========================================
+
       const newHistory = [
         ...history,
 
@@ -463,11 +643,13 @@ ${webContext || "なし"}
       // ==========================================
       // LINE返信
       // ==========================================
+
       await replyToLine(
         event.replyToken,
         lineReply,
         env
       );
+
 
     } catch (error) {
       console.error(
@@ -489,8 +671,9 @@ function decideWhetherToSearch(message) {
 
 
   // ==========================================
-  // 記憶系は検索しない
+  // 記憶系
   // ==========================================
+
   const memoryWords = [
     "覚えてる",
     "覚えとる",
@@ -502,6 +685,7 @@ function decideWhetherToSearch(message) {
     "俺のこと",
     "私のこと"
   ];
+
 
   if (
     memoryWords.some(
@@ -518,13 +702,14 @@ function decideWhetherToSearch(message) {
 
 
   // ==========================================
-  // 雑談で検索しないパターン
+  // 雑談
   // ==========================================
+
   const casualPatterns = [
-    "今日暑いね",
-    "今日暑いな",
     "暑いね",
     "暑いな",
+    "今日暑いね",
+    "今日暑いな",
     "眠い",
     "疲れた",
     "おはよう",
@@ -534,6 +719,7 @@ function decideWhetherToSearch(message) {
     "暇",
     "ひま"
   ];
+
 
   if (
     casualPatterns.some(
@@ -550,8 +736,9 @@ function decideWhetherToSearch(message) {
 
 
   // ==========================================
-  // 明示的に検索が必要
+  // Web検索が必要な表現
   // ==========================================
+
   const searchWords = [
     "調べて",
     "検索して",
@@ -569,8 +756,11 @@ function decideWhetherToSearch(message) {
     "どこで買",
     "今売って",
     "結果",
-    "順位"
+    "順位",
+    "営業時間",
+    "天気"
   ];
+
 
   const shouldSearch =
     searchWords.some(
@@ -591,6 +781,7 @@ function decideWhetherToSearch(message) {
   let freshness =
     "none";
 
+
   if (
     text.includes("今日の") ||
     text.includes("現在")
@@ -610,10 +801,31 @@ function decideWhetherToSearch(message) {
 
   return {
     search: true,
+
     query:
-      text.slice(0, 350),
+      cleanSearchQuery(text),
+
     freshness
   };
+}
+
+
+// ==============================================
+// 検索語を軽く整える
+// ==============================================
+
+function cleanSearchQuery(text) {
+  return String(text)
+    .replace(
+      /調べて(教えて)?/g,
+      ""
+    )
+    .replace(
+      /検索して(教えて)?/g,
+      ""
+    )
+    .trim()
+    .slice(0, 300);
 }
 
 
@@ -634,14 +846,15 @@ async function searchTavily(
 
 
   const cacheKey =
-    `tavily:${simpleHash(
+    `tavily:v5:${simpleHash(
       `${query}:${freshness}`
     )}`;
 
 
   // ==========================================
-  // 15分キャッシュ
+  // KVキャッシュ
   // ==========================================
+
   try {
     const cached =
       await env.MEMORY.get(
@@ -658,11 +871,6 @@ async function searchTavily(
           parsed.results
         )
       ) {
-        console.log(
-          "TAVILY CACHE HIT:",
-          query
-        );
-
         return parsed;
       }
     }
@@ -676,9 +884,9 @@ async function searchTavily(
 
 
   // ==========================================
-  // 1回目
-  // 最新系なら期間指定あり
+  // Tavily呼び出し
   // ==========================================
+
   let rawResults =
     await callTavily(
       query,
@@ -688,37 +896,37 @@ async function searchTavily(
 
 
   // ==========================================
-  // 期間指定で0件だった場合だけ
-  // 期間指定なしで1回再検索
+  // 期間指定で弱い時は通常検索
   // ==========================================
+
   if (
-    rawResults.length === 0 &&
+    rawResults.length < 3 &&
     freshness !== "none"
   ) {
-    console.log(
-      "TAVILY RETRY WITHOUT TIME RANGE:",
-      query
-    );
-
-    rawResults =
+    const retry =
       await callTavily(
         query,
         "none",
         env
       );
+
+    rawResults =
+      mergeResults(
+        rawResults,
+        retry
+      );
   }
 
 
   // ==========================================
-  // 危険サイト除外
+  // 安全フィルター
   // ==========================================
+
   const safeResults =
     rawResults
       .filter(
         item =>
-          isSafeSearchResult(
-            item
-          )
+          isSafeSearchResult(item)
       )
       .map(
         item => ({
@@ -737,13 +945,24 @@ async function searchTavily(
               item.content || ""
             ).slice(
               0,
-              1800
+              2200
             ),
 
           score:
             typeof item.score === "number"
               ? item.score
-              : 0
+              : 0,
+
+          trust:
+            trustedBoost(
+              item.url || ""
+            ),
+
+          relevance:
+            keywordOverlap(
+              query,
+              `${item.title || ""} ${item.content || ""}`
+            )
         })
       )
       .filter(
@@ -751,44 +970,103 @@ async function searchTavily(
           item.title &&
           item.url &&
           item.score >= 0.20
-      )
-      .sort(
-        (a, b) => {
-          const trustDifference =
-            trustedBoost(
-              b.url
-            ) -
-            trustedBoost(
-              a.url
-            );
+      );
 
-          if (
-            trustDifference !== 0
-          ) {
-            return trustDifference;
-          }
 
-          return (
-            b.score -
-            a.score
-          );
-        }
-      )
-      .slice(0, 5);
+  // ==========================================
+  // 順位付け
+  // ==========================================
+
+  safeResults.sort(
+    (a, b) => {
+      const aTotal =
+        a.trust * 2 +
+        a.relevance +
+        a.score;
+
+      const bTotal =
+        b.trust * 2 +
+        b.relevance +
+        b.score;
+
+      return (
+        bTotal -
+        aTotal
+      );
+    }
+  );
+
+
+  // ==========================================
+  // 同一ドメインを増やしすぎない
+  // ==========================================
+
+  const selected = [];
+  const domainCounts =
+    new Map();
+
+
+  for (
+    const item of safeResults
+  ) {
+    const domain =
+      getDomain(item.url);
+
+    const current =
+      domainCounts.get(domain) || 0;
+
+
+    if (current >= 2) {
+      continue;
+    }
+
+
+    selected.push(item);
+
+    domainCounts.set(
+      domain,
+      current + 1
+    );
+
+
+    if (
+      selected.length >= 5
+    ) {
+      break;
+    }
+  }
+
+
+  const results =
+    selected.map(
+      item => ({
+        title:
+          item.title,
+
+        url:
+          item.url,
+
+        content:
+          item.content,
+
+        score:
+          item.score
+      })
+    );
 
 
   const result = {
     query,
-    results:
-      safeResults,
+    results,
     searchedAt:
       new Date().toISOString()
   };
 
 
   // ==========================================
-  // 15分保存
+  // 15分キャッシュ
   // ==========================================
+
   try {
     await env.MEMORY.put(
       cacheKey,
@@ -811,7 +1089,7 @@ async function searchTavily(
 
 
 // ==============================================
-// Tavily API実行
+// Tavily API
 // ==============================================
 
 async function callTavily(
@@ -826,7 +1104,7 @@ async function callTavily(
       "basic",
 
     max_results:
-      7,
+      8,
 
     include_answer:
       false,
@@ -839,9 +1117,6 @@ async function callTavily(
   };
 
 
-  // ==========================================
-  // 最新系だけ期間指定
-  // ==========================================
   if (
     freshness === "day" ||
     freshness === "week" ||
@@ -888,6 +1163,7 @@ async function callTavily(
 
   let data;
 
+
   try {
     data =
       JSON.parse(text);
@@ -908,7 +1184,43 @@ async function callTavily(
 
 
 // ==============================================
-// 危険・成人向けサイト除外
+// 検索結果を重複排除して結合
+// ==============================================
+
+function mergeResults(a, b) {
+  const map =
+    new Map();
+
+
+  for (
+    const item of [
+      ...a,
+      ...b
+    ]
+  ) {
+    if (!item?.url) {
+      continue;
+    }
+
+    if (
+      !map.has(item.url)
+    ) {
+      map.set(
+        item.url,
+        item
+      );
+    }
+  }
+
+
+  return [
+    ...map.values()
+  ];
+}
+
+
+// ==============================================
+// 危険サイト除外
 // ==============================================
 
 function isSafeSearchResult(item) {
@@ -916,6 +1228,7 @@ function isSafeSearchResult(item) {
     String(
       item?.url || ""
     ).toLowerCase();
+
 
   const text =
     `${item?.title || ""} ${item?.content || ""}`
@@ -932,7 +1245,8 @@ function isSafeSearchResult(item) {
     "spankbang.",
     "tube8.",
     "onlyfans.",
-    "brazzers."
+    "brazzers.",
+    "adult."
   ];
 
 
@@ -970,42 +1284,37 @@ function isSafeSearchResult(item) {
 
 
 // ==============================================
-// 公式ドメインを少し優先
+// 公式・一次情報を優先
 // ==============================================
 
 function trustedBoost(url) {
   const domain =
-    String(url || "")
-      .toLowerCase();
+    getDomain(url);
 
 
   const officialDomains = [
-    ".go.jp",
-    ".lg.jp",
-
     "nintendo.com",
     "nintendo.co.jp",
-
+    "support.nintendo.com",
     "sony.com",
     "playstation.com",
-
     "apple.com",
-
+    "support.apple.com",
     "google.com",
-
-    "microsoft.com",
-
     "support.google.com",
-
-    "support.apple.com"
+    "microsoft.com",
+    "support.microsoft.com",
+    "github.com",
+    "developers.cloudflare.com",
+    "cloudflare.com",
+    ".go.jp",
+    ".lg.jp"
   ];
 
 
   return officialDomains.some(
-    trusted =>
-      domain.includes(
-        trusted
-      )
+    item =>
+      domain.includes(item)
   )
     ? 1
     : 0;
@@ -1013,34 +1322,174 @@ function trustedBoost(url) {
 
 
 // ==============================================
-// 関西弁・誤字の最低限補正
+// 質問との関連度
 // ==============================================
 
-function cleanDialect(text) {
-  return String(
-    text || ""
-  )
+function keywordOverlap(
+  query,
+  target
+) {
+  const words =
+    extractKeywords(query);
+
+
+  if (
+    words.length === 0
+  ) {
+    return 0;
+  }
+
+
+  const normalizedTarget =
+    String(target)
+      .toLowerCase();
+
+
+  const matched =
+    words.filter(
+      word =>
+        normalizedTarget.includes(
+          word.toLowerCase()
+        )
+    ).length;
+
+
+  return (
+    matched /
+    words.length
+  );
+}
+
+
+// ==============================================
+// キーワード抽出
+// ==============================================
+
+function extractKeywords(text) {
+  return String(text)
     .replace(
-      /ちゃび/g,
-      "ちゃぴ"
+      /[？?！!。、,.]/g,
+      " "
     )
     .replace(
-      /やで[〜～]?/g,
-      "ばい"
+      /(最新情報|最新|最近|調べて|検索して|教えて|について|とは|ニュース|現在|今日)/g,
+      " "
     )
-    .replace(
-      /ええで[〜～]?/g,
-      "よかよ"
+    .split(/\s+/)
+    .map(
+      word =>
+        word.trim()
     )
-    .replace(
-      /ええやろ[〜～]?/g,
-      "よかろ〜"
+    .filter(
+      word =>
+        word.length >= 2
     )
-    .replace(
-      /ほんま/g,
-      "ほんと"
-    )
-    .trim();
+    .slice(
+      0,
+      10
+    );
+}
+
+
+// ==============================================
+// URLからドメイン取得
+// ==============================================
+
+function getDomain(url) {
+  try {
+    return new URL(url)
+      .hostname
+      .toLowerCase();
+
+  } catch {
+    return "";
+  }
+}
+
+
+// ==============================================
+// 最終回答クリーニング
+// ==============================================
+
+function cleanReply(text) {
+  let cleaned =
+    String(text || "");
+
+
+  // Markdown除去
+  cleaned =
+    cleaned
+      .replace(
+        /\*\*/g,
+        ""
+      )
+      .replace(
+        /^#{1,6}\s*/gm,
+        ""
+      );
+
+
+  // URL除去
+  cleaned =
+    cleaned.replace(
+      /https?:\/\/[^\s]+/gi,
+      ""
+    );
+
+
+  // 参考・出典だけの行除去
+  cleaned =
+    cleaned
+      .split("\n")
+      .filter(
+        line => {
+          const value =
+            line.trim();
+
+          return !(
+            /^参考[:：]?$/.test(value) ||
+            /^出典[:：]?$/.test(value) ||
+            /^リンク[:：]?$/.test(value)
+          );
+        }
+      )
+      .join("\n");
+
+
+  // 代表的な関西弁補正
+  cleaned =
+    cleaned
+      .replace(
+        /ちゃび/g,
+        "ちゃぴ"
+      )
+      .replace(
+        /やで[〜～]?/g,
+        "ばい"
+      )
+      .replace(
+        /ええで[〜～]?/g,
+        "よかよ"
+      )
+      .replace(
+        /ええやろ[〜～]?/g,
+        "よかよ"
+      )
+      .replace(
+        /ほんま/g,
+        "ほんと"
+      )
+      .replace(
+        /みたいや/g,
+        "みたい"
+      )
+      .replace(
+        /なんや/g,
+        "なん"
+      );
+
+
+  return cleaned.trim();
 }
 
 
@@ -1052,6 +1501,7 @@ function simpleHash(text) {
   let hash =
     2166136261;
 
+
   for (
     let i = 0;
     i < text.length;
@@ -1060,6 +1510,7 @@ function simpleHash(text) {
     hash ^=
       text.charCodeAt(i);
 
+
     hash +=
       (hash << 1) +
       (hash << 4) +
@@ -1067,6 +1518,7 @@ function simpleHash(text) {
       (hash << 8) +
       (hash << 24);
   }
+
 
   return (
     hash >>> 0
