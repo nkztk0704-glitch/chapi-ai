@@ -289,15 +289,19 @@ async function handleEvents(events, env) {
               memories,
               {
                 type: "general",
+
                 key:
                   "general_" +
                   simpleHash(
                     userMessage
                   ),
+
                 value:
                   userMessage,
+
                 text:
                   userMessage,
+
                 savedAt:
                   new Date()
                     .toISOString(),
@@ -428,8 +432,7 @@ async function handleEvents(events, env) {
             );
 
           if (
-            searchResult.results
-              .length > 0
+            searchResult.results.length > 0
           ) {
             searched = true;
 
@@ -469,10 +472,42 @@ ${item.content}
       }
 
       // ============================================================
-      // 現在日時
+      // 超重要
       //
-      // Cloudflare内部のUTC時刻から
-      // 日本時間を明示的に作る
+      // 検索するべき質問なのに検索結果が取れなかった場合、
+      // AI自身の知識では絶対に回答させない
+      // ============================================================
+
+      if (
+        searchDecision.search &&
+        !searched
+      ) {
+        const replyText =
+          isDadaSurvivorQuery(
+            userMessage
+          )
+            ? "ごめん💦 今ダダサバイバーの情報を検索で確認できんかったけん、適当なことは言わんようにしとくね。もう一回聞いてみて🙏"
+            : "ごめん💦 今うまく検索結果を確認できんかった。適当なことは言わんようにしとくね🙏";
+
+        await saveHistory(
+          historyKey,
+          history,
+          userMessage,
+          replyText,
+          env
+        );
+
+        await replyToLine(
+          event.replyToken,
+          replyText,
+          env
+        );
+
+        continue;
+      }
+
+      // ============================================================
+      // 現在日時
       // ============================================================
 
       const now =
@@ -580,6 +615,89 @@ LINEにいる、
 ${currentJst}
 
 
+【最重要：検索済みの場合】
+
+今回Web検索済みなら、
+必ず下の検索資料だけを根拠に答えてください。
+
+モデル自身が学習時に覚えた知識は、
+事実確認には使ってはいけません。
+
+検索資料に書かれていない
+
+・キャラクター名
+・サバイバー名
+・武器名
+・装備名
+・スキル名
+・イベント名
+・アイテム名
+・報酬名
+
+を勝手に作ってはいけません。
+
+検索資料に存在しない固有名詞を
+新しく回答へ追加してはいけません。
+
+検索資料で確認できない場合は、
+
+「検索資料では確認できんかった」
+
+と答えてください。
+
+
+【ダダサバイバーの超重要ルール】
+
+ユーザーが
+ダダサバイバーについて質問している場合は、
+検索資料だけを使ってください。
+
+特に、
+
+「強いサバイバー」
+「最強サバイバー」
+「おすすめキャラ」
+「強い武器」
+「最強装備」
+「S級軍備」
+「何を育てる？」
+「何を交換？」
+「無課金なら？」
+「どっちがいい？」
+「どれが強い？」
+
+などの質問では、
+必ず検索資料を比較して答えてください。
+
+検索資料に
+ランキングや評価が書いていない場合は、
+勝手にランキングを作ってはいけません。
+
+その場合は、
+
+「今回の検索資料だけでは一番強いとは断定できん」
+
+と答えてください。
+
+
+【攻略判断】
+
+ユーザーが
+おすすめや順位を聞いた場合は、
+
+最初に短く結論を答えてください。
+
+そのあと、
+検索資料にある理由だけ説明してください。
+
+例:
+
+「今の検索資料を見る限り、○○がかなり評価高いばい👌」
+
+検索資料にない理由を
+追加してはいけません。
+
+
 【日時判定の最重要ルール】
 
 イベントについて
@@ -601,10 +719,10 @@ ${currentJst}
 
 開始日時より前なら
 「まだ開始前」
-と答えてください。
 
 終了日時を過ぎている場合は
 「終了済み」
+
 と答えてください。
 
 
@@ -612,25 +730,17 @@ ${currentJst}
 
 ゲーム攻略サイトでは、
 
-「8月12日25:00」
-
-のような表記があります。
-
-この場合、
-
-8月12日の25:00
+8月12日25:00
 =
-8月13日の午前1:00
+8月13日01:00
 
 です。
 
-同様に、
+24:00 = 翌日00:00
+25:00 = 翌日01:00
+26:00 = 翌日02:00
 
-24:00 = 翌日の0:00
-25:00 = 翌日の1:00
-26:00 = 翌日の2:00
-
-として必ず計算してください。
+として計算してください。
 
 
 【同じイベントで日時情報が食い違う場合】
@@ -639,64 +749,39 @@ ${currentJst}
 
 「8月12日〜8月17日」
 
-という日付だけの資料と、
+と、
 
 「8月12日25:00〜8月17日24:59」
 
-という時刻まで書かれた資料がある場合、
+の両方がある場合は、
 
 必ず
-「時刻まで書かれた情報」
-を優先してください。
-
-日付だけの情報を使って
-開催中かどうか判断してはいけません。
-
-より具体的な日時情報を
-優先してください。
+時刻まで書かれた情報を優先してください。
 
 
 【現在開催中イベントを聞かれた場合】
 
-ユーザーが
+開始前イベントを
+現在開催中として紹介してはいけません。
 
-「今来てるイベント」
-「今やってるイベント」
-「現在のイベント」
-「開催中のイベント」
-
-などを聞いた場合、
-
-開始前のイベントを
-「現在開催中」の一覧に
-含めてはいけません。
-
-開始前のイベントは、
+開始前なら、
 
 「次に始まるイベント」
 
-として分けて説明してください。
+として分けてください。
 
-検索資料から
 現在開催中だと確認できる
-期間限定イベントがない場合は、
+期間限定イベントがなければ、
 
 「今の時点では開催中の期間限定イベントは確認できんかった」
 
 と答えてください。
 
-そのうえで、
-開始予定が確認できる場合だけ、
-
-「次は○月○日○時から○○が始まる予定」
-
-と説明してください。
-
 
 【Web検索済みの場合】
 
 今回Web検索済みなら、
-下にある「検索資料」だけを使って
+検索資料だけを使って
 事実関係を回答してください。
 
 あなた自身の古い知識を
@@ -706,59 +791,18 @@ ${currentJst}
 ユーザーの名前・好み・記憶を
 検索回答に混ぜてはいけません。
 
-ユーザーが聞いていない個人情報を
-絶対に話題に出さないでください。
 
-検索資料に明記されていない内容は
-事実として答えてはいけません。
+【最新情報】
 
-特に、
+「最新」
+「現在」
+「今」
+と聞かれた場合は、
 
-・発売日
-・価格
-・スペック
-・対応機能
-・ゲーム名
-・イベント名
-・イベント開催日時
-・報酬
-・アップデート内容
-・サービス内容
-・日付
-・数字
+昔の記事を
+現在の情報として説明してはいけません。
 
-は資料に書いてあるものだけ
-使ってください。
-
-検索資料同士で内容が
-食い違う場合は、
-
-より具体的な情報を優先し、
-それでも判断できない場合は
-
-「情報が食い違っとる」
-
-と伝えてください。
-
-検索結果がない場合は、
-
-「今うまく検索結果を確認できんかった」
-
-と伝えてください。
-
-
-【最新情報という質問】
-
-「最新情報」を聞かれた時は、
-
-昔の発表を
-最新ニュースのように
-説明しないでください。
-
-資料から
-最近の更新・現在の仕様・
-最近の発表として確認できる内容だけ
-答えてください。
+現在日時に近い情報を優先してください。
 
 
 【URL】
@@ -798,14 +842,16 @@ ${webContext || "なし"}
       const messages = [
         {
           role: "system",
-          content: systemPrompt,
+          content:
+            systemPrompt,
         },
 
         ...historyForAI,
 
         {
           role: "user",
-          content: userMessage,
+          content:
+            userMessage,
         },
       ];
 
@@ -821,7 +867,7 @@ ${webContext || "なし"}
 
             max_tokens:
               searched
-                ? 700
+                ? 850
                 : 450,
 
             temperature:
@@ -909,7 +955,13 @@ function decideWhetherToSearch(
   message
 ) {
   const text =
-    message.trim();
+    String(
+      message || ""
+    ).trim();
+
+  // ============================================================
+  // 個人記憶確認は検索しない
+  // ============================================================
 
   const memoryWords = [
     "覚えてる",
@@ -934,6 +986,41 @@ function decideWhetherToSearch(
       freshness: "none",
     };
   }
+
+  // ============================================================
+  // 超重要
+  //
+  // ダダサバイバー関連なら
+  // 「最新」「調べて」が無くても強制検索
+  // ============================================================
+
+  if (
+    isDadaSurvivorQuery(
+      text
+    )
+  ) {
+    const freshness =
+      isCurrentInfoQuestion(
+        text
+      )
+        ? "week"
+        : "none";
+
+    return {
+      search: true,
+
+      query:
+        buildSearchQuery(
+          text
+        ),
+
+      freshness,
+    };
+  }
+
+  // ============================================================
+  // 一般検索
+  // ============================================================
 
   const searchWords = [
     "調べて",
@@ -977,19 +1064,9 @@ function decideWhetherToSearch(
     "none";
 
   if (
-    text.includes("今日") ||
-    text.includes("現在") ||
-    text.includes("今来てる") ||
-    text.includes("今きてる") ||
-    text.includes("今やってる") ||
-    text.includes("開催中")
-  ) {
-    freshness =
-      "week";
-  } else if (
-    text.includes("最新") ||
-    text.includes("最近") ||
-    text.includes("ニュース")
+    isCurrentInfoQuestion(
+      text
+    )
   ) {
     freshness =
       "week";
@@ -1009,6 +1086,72 @@ function decideWhetherToSearch(
 
 
 // ============================================================
+// ダダサ判定
+// ============================================================
+
+function isDadaSurvivorQuery(
+  text
+) {
+  const value =
+    String(
+      text || ""
+    ).toLowerCase();
+
+  const dadaWords = [
+    "ダダサバ",
+    "ダダサバイバー",
+    "survivor.io",
+    "survivor io",
+    "s級軍備",
+    "s級装備",
+    "キティース",
+    "タローシア",
+    "ヴァルカン",
+    "テックパーツ",
+    "コレクション",
+  ];
+
+  return dadaWords.some(
+    word =>
+      value.includes(
+        word.toLowerCase()
+      )
+  );
+}
+
+
+// ============================================================
+// 現在系質問
+// ============================================================
+
+function isCurrentInfoQuestion(
+  text
+) {
+  const words = [
+    "最新",
+    "現在",
+    "今の",
+    "今来てる",
+    "今きてる",
+    "今やってる",
+    "開催中",
+    "今日",
+    "イベント",
+    "アップデート",
+    "最強",
+    "強い",
+    "おすすめ",
+    "ランキング",
+  ];
+
+  return words.some(
+    word =>
+      text.includes(word)
+  );
+}
+
+
+// ============================================================
 // 検索語
 // ============================================================
 
@@ -1023,13 +1166,29 @@ function buildSearchQuery(text) {
         /検索して(教えて)?/g,
         ""
       )
+      .replace(
+        /教えて/g,
+        ""
+      )
       .trim();
 
+  const current =
+    getCurrentJstParts();
+
+  // ============================================================
+  // ダダサバイバー
+  // ============================================================
+
   if (
-    cleaned.includes(
-      "ダダサバイバー"
-    ) &&
-    (
+    isDadaSurvivorQuery(
+      cleaned
+    )
+  ) {
+    let extra =
+      ` Survivor.io ${current.year}年${current.month}月`;
+
+    // イベント
+    if (
       cleaned.includes(
         "イベント"
       ) ||
@@ -1039,12 +1198,87 @@ function buildSearchQuery(text) {
       cleaned.includes(
         "今きてる"
       )
-    )
-  ) {
+    ) {
+      extra +=
+        " 最新 イベント 開催期間";
+    }
+
+    // キャラ・サバイバー
+    if (
+      cleaned.includes(
+        "サバイバー"
+      ) ||
+      cleaned.includes(
+        "キャラ"
+      )
+    ) {
+      extra +=
+        " キャラ サバイバー 評価 ランキング";
+    }
+
+    // 強さ
+    if (
+      cleaned.includes(
+        "強い"
+      ) ||
+      cleaned.includes(
+        "最強"
+      ) ||
+      cleaned.includes(
+        "おすすめ"
+      )
+    ) {
+      extra +=
+        " 最強 おすすめ ランキング 評価";
+    }
+
+    // 装備
+    if (
+      cleaned.includes(
+        "装備"
+      ) ||
+      cleaned.includes(
+        "軍備"
+      ) ||
+      cleaned.includes(
+        "武器"
+      )
+    ) {
+      extra +=
+        " 装備 武器 評価 ランキング";
+    }
+
+    // 無課金
+    if (
+      cleaned.includes(
+        "無課金"
+      )
+    ) {
+      extra +=
+        " 無課金 攻略";
+    }
+
+    // 交換
+    if (
+      cleaned.includes(
+        "交換"
+      )
+    ) {
+      extra +=
+        " 交換 おすすめ";
+    }
+
     return (
-      "ダダサバイバー " +
-      "2026年8月 " +
-      "イベント 最新 開催期間"
+      `${cleaned}${extra}`
+        .replace(
+          /\s+/g,
+          " "
+        )
+        .trim()
+        .slice(
+          0,
+          300
+        )
     );
   }
 
@@ -1073,7 +1307,7 @@ async function searchTavily(
   }
 
   const cacheKey =
-    `tavily:v13:${simpleHash(
+    `tavily:v20:${simpleHash(
       `${query}:${freshness}`
     )}`;
 
@@ -1095,7 +1329,8 @@ async function searchTavily(
         parsed &&
         Array.isArray(
           parsed.results
-        )
+        ) &&
+        parsed.results.length > 0
       ) {
         return parsed;
       }
@@ -1115,28 +1350,33 @@ async function searchTavily(
   let rawResults = [];
 
   // ============================================================
-  // 優先サイト検索
+  // 優先サイト
   // ============================================================
 
   if (
     preferredDomains.length > 0
   ) {
-    rawResults =
-      await callTavily(
-        query,
-        freshness,
-        env,
-        preferredDomains
+    try {
+      rawResults =
+        await callTavily(
+          query,
+          freshness,
+          env,
+          preferredDomains
+        );
+    } catch (error) {
+      console.error(
+        "PREFERRED SEARCH ERROR:",
+        error
       );
+    }
   }
 
   // ============================================================
-  // 一般検索追加
+  // 一般検索も必ず補助で使う
   // ============================================================
 
-  if (
-    rawResults.length < 5
-  ) {
+  try {
     const general =
       await callTavily(
         query,
@@ -1150,33 +1390,45 @@ async function searchTavily(
         rawResults,
         general
       );
+  } catch (error) {
+    console.error(
+      "GENERAL SEARCH ERROR:",
+      error
+    );
   }
 
   // ============================================================
-  // 期間指定で不足した場合
+  // 期間指定で少ない場合は期間なし
   // ============================================================
 
   if (
     rawResults.length < 4 &&
     freshness !== "none"
   ) {
-    const retry =
-      await callTavily(
-        query,
-        "none",
-        env,
-        preferredDomains
-      );
+    try {
+      const retry =
+        await callTavily(
+          query,
+          "none",
+          env,
+          []
+        );
 
-    rawResults =
-      mergeResults(
-        rawResults,
-        retry
+      rawResults =
+        mergeResults(
+          rawResults,
+          retry
+        );
+    } catch (error) {
+      console.error(
+        "RETRY SEARCH ERROR:",
+        error
       );
+    }
   }
 
   // ============================================================
-  // 品質フィルター
+  // 整理
   // ============================================================
 
   const results =
@@ -1204,7 +1456,7 @@ async function searchTavily(
               item.content || ""
             ).slice(
               0,
-              2200
+              2400
             ),
 
           score:
@@ -1234,8 +1486,7 @@ async function searchTavily(
         item =>
           item.title &&
           item.url &&
-          item.score >= 0.25 &&
-          item.relevance > 0
+          item.score >= 0.18
       )
       .sort(
         (a, b) => {
@@ -1255,7 +1506,7 @@ async function searchTavily(
           );
         }
       )
-      .slice(0, 6)
+      .slice(0, 7)
       .map(
         item => ({
           title:
@@ -1280,21 +1531,26 @@ async function searchTavily(
         .toISOString(),
   };
 
-  try {
-    await env.MEMORY.put(
-      cacheKey,
-      JSON.stringify(
-        result
-      ),
-      {
-        expirationTtl: 300,
-      }
-    );
-  } catch (error) {
-    console.error(
-      "CACHE WRITE ERROR:",
-      error
-    );
+  if (
+    results.length > 0
+  ) {
+    try {
+      await env.MEMORY.put(
+        cacheKey,
+        JSON.stringify(
+          result
+        ),
+        {
+          expirationTtl:
+            300,
+        }
+      );
+    } catch (error) {
+      console.error(
+        "CACHE WRITE ERROR:",
+        error
+      );
+    }
   }
 
   return result;
@@ -1405,7 +1661,7 @@ async function callTavily(
 
 
 // ============================================================
-// 質問ごとの優先サイト
+// 優先サイト
 // ============================================================
 
 function detectPreferredDomains(
@@ -1425,11 +1681,11 @@ function detectPreferredDomains(
   ) {
     return [
       "game8.jp",
+      "gamewith.jp",
       "senilog.com",
       "play.google.com",
       "apps.apple.com",
-      "facebook.com",
-      "instagram.com",
+      "habby.com",
       "youtube.com",
     ];
   }
@@ -1548,6 +1804,7 @@ function trustScore(
     "gamewith.jp",
     "game8.jp",
     "senilog.com",
+    "habby.com",
   ];
 
   if (
@@ -1664,7 +1921,7 @@ function extractKeywords(
       word =>
         word.length >= 2
     )
-    .slice(0, 10);
+    .slice(0, 12);
 }
 
 
@@ -1681,8 +1938,8 @@ function mergeResults(
 
   for (
     const item of [
-      ...a,
-      ...b,
+      ...(a || []),
+      ...(b || []),
     ]
   ) {
     if (
@@ -1710,7 +1967,7 @@ function mergeResults(
 
 
 // ============================================================
-// JST表示
+// JST
 // ============================================================
 
 function formatJstForPrompt(
@@ -1747,6 +2004,35 @@ function formatJstForPrompt(
 }
 
 
+function getCurrentJstParts() {
+  const now =
+    new Date();
+
+  const jst =
+    new Date(
+      now.getTime() +
+      9 * 60 * 60 * 1000
+    );
+
+  return {
+    year:
+      jst.getUTCFullYear(),
+
+    month:
+      jst.getUTCMonth() + 1,
+
+    day:
+      jst.getUTCDate(),
+
+    hour:
+      jst.getUTCHours(),
+
+    minute:
+      jst.getUTCMinutes(),
+  };
+}
+
+
 // ============================================================
 // 記憶処理
 // ============================================================
@@ -1770,11 +2056,14 @@ function extractMemories(
   ) {
     result.push({
       type: "profile",
+
       key: "name",
+
       value:
         cleanMemoryValue(
           name[1]
         ),
+
       savedAt: now,
     });
   }
@@ -1789,11 +2078,14 @@ function extractMemories(
   ) {
     result.push({
       type: "profile",
+
       key: "nickname",
+
       value:
         cleanMemoryValue(
           nickname[1]
         ),
+
       savedAt: now,
     });
   }
@@ -1808,12 +2100,15 @@ function extractMemories(
   ) {
     result.push({
       type: "preference",
+
       key:
         "favorite_food",
+
       value:
         cleanFoodValue(
           food[1]
         ),
+
       savedAt: now,
     });
   }
@@ -1872,6 +2167,7 @@ function migrateAllMemories(
             result,
             {
               ...converted,
+
               savedAt:
                 item?.savedAt ||
                 converted.savedAt,
@@ -2152,7 +2448,7 @@ function selectRelevantMemories(
     return memories.filter(
       item =>
         item.key ===
-        "favorite_food"
+          "favorite_food"
     );
   }
 
@@ -2248,6 +2544,10 @@ function cleanReply(
     text || ""
   )
     .replace(
+      /<think>[\s\S]*?<\/think>/gi,
+      ""
+    )
+    .replace(
       /\*\*/g,
       ""
     )
@@ -2311,12 +2611,14 @@ async function saveHistory(
 
     {
       role: "user",
+
       content:
         userMessage,
     },
 
     {
       role: "assistant",
+
       content:
         replyText,
     },
@@ -2364,10 +2666,14 @@ function extractAIText(
     typeof aiResponse
       ?.response ===
       "string" &&
-    aiResponse.response.trim()
+    aiResponse
+      .response
+      .trim()
   ) {
     return (
-      aiResponse.response.trim()
+      aiResponse
+        .response
+        .trim()
     );
   }
 
@@ -2414,13 +2720,18 @@ function simpleHash(
   let hash =
     2166136261;
 
+  const value =
+    String(
+      text || ""
+    );
+
   for (
     let i = 0;
-    i < text.length;
+    i < value.length;
     i++
   ) {
     hash ^=
-      text.charCodeAt(i);
+      value.charCodeAt(i);
 
     hash +=
       (hash << 1) +
@@ -2464,7 +2775,9 @@ async function replyToLine(
                 type: "text",
 
                 text:
-                  text.slice(
+                  String(
+                    text || ""
+                  ).slice(
                     0,
                     5000
                   ),
