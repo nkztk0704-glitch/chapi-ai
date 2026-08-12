@@ -1,5 +1,89 @@
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    // =========================
+    // Tavily単体検索テスト
+    // =========================
+    if (
+      request.method === "GET" &&
+      url.searchParams.get("check") === "tavily"
+    ) {
+      try {
+        if (!env.TAVILY_API_KEY) {
+          return jsonResponse({
+            success: false,
+            error: "TAVILY_API_KEY が設定されていません"
+          });
+        }
+
+        const tavilyResponse = await fetch(
+          "https://api.tavily.com/search",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${env.TAVILY_API_KEY}`
+            },
+            body: JSON.stringify({
+              query: "Nintendo Switch 2 最新情報",
+              search_depth: "basic",
+              max_results: 5,
+              include_answer: false,
+              include_raw_content: false
+            })
+          }
+        );
+
+        const text = await tavilyResponse.text();
+
+        let data;
+
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return jsonResponse({
+            success: false,
+            status: tavilyResponse.status,
+            error: "TavilyからJSON以外が返りました",
+            raw: text.slice(0, 2000)
+          });
+        }
+
+        if (!tavilyResponse.ok) {
+          return jsonResponse({
+            success: false,
+            status: tavilyResponse.status,
+            apiResponse: data
+          });
+        }
+
+        const results = Array.isArray(data?.results)
+          ? data.results
+          : [];
+
+        return jsonResponse({
+          success: true,
+          query: data?.query || "Nintendo Switch 2 最新情報",
+          results: results.map(item => ({
+            title: item.title || "",
+            url: item.url || "",
+            content: item.content || "",
+            score: item.score ?? null
+          }))
+        });
+
+      } catch (error) {
+        return jsonResponse({
+          success: false,
+          error: String(error)
+        });
+      }
+    }
+
+    // =========================
+    // 通常のLINE Bot
+    // =========================
     if (request.method !== "POST") {
       return new Response("ちゃぴAI is running!");
     }
@@ -14,12 +98,12 @@ export default {
 
     const events = body.events || [];
 
-    // LINEには即200を返して処理は裏で続行
     ctx.waitUntil(handleEvents(events, env));
 
     return new Response("OK");
   },
 };
+
 
 async function handleEvents(events, env) {
   for (const event of events) {
@@ -38,9 +122,6 @@ async function handleEvents(events, env) {
       const historyKey = `history:${conversationId}`;
       const memoryKey = `memory:${conversationId}`;
 
-      // =========================
-      // 会話履歴
-      // =========================
       let history = [];
 
       try {
@@ -57,9 +138,6 @@ async function handleEvents(events, env) {
         console.error("HISTORY READ ERROR:", error);
       }
 
-      // =========================
-      // 長期記憶
-      // =========================
       let memories = [];
 
       try {
@@ -76,9 +154,6 @@ async function handleEvents(events, env) {
         console.error("MEMORY READ ERROR:", error);
       }
 
-      // =========================
-      // 記憶削除
-      // =========================
       if (
         userMessage.includes("全部忘れて") ||
         userMessage.includes("記憶消して") ||
@@ -96,9 +171,6 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // =========================
-      // 長期記憶への保存
-      // =========================
       const shouldRemember =
         userMessage.includes("覚え") ||
         userMessage.includes("記憶して") ||
@@ -113,7 +185,7 @@ async function handleEvents(events, env) {
         if (!alreadyExists) {
           memories.push({
             text: userMessage,
-            savedAt: new Date().toISOString(),
+            savedAt: new Date().toISOString()
           });
         }
 
@@ -129,7 +201,6 @@ async function handleEvents(events, env) {
         }
       }
 
-      // 会話履歴は直近16件
       history = history.slice(-16);
 
       const rememberedText =
@@ -139,10 +210,6 @@ async function handleEvents(events, env) {
               .join("\n")
           : "まだ特に覚えている情報はありません。";
 
-      // =========================
-      // メインAI
-      // Web検索は現在OFF
-      // =========================
       const messages = [
         {
           role: "system",
@@ -150,33 +217,17 @@ async function handleEvents(events, env) {
 あなたの名前は「ちゃぴ」。
 LINEにいる、明るく親しみやすい博多の女の子です。
 
-最優先は、友達とのLINEのように自然に会話することです。
-
 【基本ルール】
 ・自然な博多弁で話す
 ・自分のことは必ず「ちゃぴ」と呼ぶ
 ・「俺」「僕」は絶対に使わない
 ・関西弁は禁止
-・雑談では勝手に長い解説をしない
+・雑談では長い解説をしない
 ・相手の発言にまず自然に反応する
 ・質問には結論から答える
-・基本1〜5文程度
-・必要なら少し詳しく説明する
 ・会話履歴と長期記憶を使う
-・分からないことを作り話で補わない
+・知らないことを作らない
 ・絵文字は軽く自然に使う
-
-【自然な博多弁】
-「〜ばい」
-「〜たい」
-「〜と？」
-「〜けん」
-「よかよ」
-「〜しとる」
-「〜しよった」
-
-毎文に方言を付ける必要はありません。
-関西弁になるくらいなら標準語を使ってください。
 
 【禁止する関西弁】
 「〜やで」
@@ -186,35 +237,23 @@ LINEにいる、明るく親しみやすい博多の女の子です。
 「なんでやねん」
 「ええやろ」
 「ええで」
-「できるんや」
-「あるんや」
-「なるんや」
 
 【重要】
-現在Web検索機能は一時停止中です。
-
-最新情報・今日の情報・価格・ニュースなど、
-現在の情報を確認しないと正確に答えられない質問については、
-知ったかぶりをしないでください。
-
-その場合は、
-「今はネット検索を一時停止しとるけん、最新情報までは確認できんよ」
-のように自然に伝えてください。
+現在、LINE側のWeb検索機能はまだOFFです。
+最新情報などは勝手に推測せず、
+今は検索機能のテスト中だと自然に伝えてください。
 
 【長期記憶】
 ${rememberedText}
-
-長期記憶と会話履歴を参考にして、
-まず自然なLINE会話として返事してください。
-`,
+`
         },
 
         ...history,
 
         {
           role: "user",
-          content: userMessage,
-        },
+          content: userMessage
+        }
       ];
 
       const aiResponse = await env.AI.run(
@@ -223,7 +262,7 @@ ${rememberedText}
           messages,
           max_tokens: 400,
           temperature: 0.45,
-          repetition_penalty: 1.1,
+          repetition_penalty: 1.1
         }
       );
 
@@ -231,19 +270,16 @@ ${rememberedText}
         extractAIText(aiResponse) ||
         "ごめん、今うまく返事できんかった💦";
 
-      // =========================
-      // 会話履歴保存
-      // =========================
       const newHistory = [
         ...history,
         {
           role: "user",
-          content: userMessage,
+          content: userMessage
         },
         {
           role: "assistant",
-          content: replyText,
-        },
+          content: replyText
+        }
       ].slice(-16);
 
       try {
@@ -255,24 +291,18 @@ ${rememberedText}
         console.error("HISTORY WRITE ERROR:", error);
       }
 
-      // =========================
-      // LINE返信
-      // =========================
       await replyToLine(
         event.replyToken,
         replyText,
         env
       );
+
     } catch (error) {
       console.error("CHAPI EVENT ERROR:", error);
     }
   }
 }
 
-
-// ==============================================
-// AI返答取り出し
-// ==============================================
 
 function extractAIText(aiResponse) {
   if (!aiResponse) return "";
@@ -305,10 +335,6 @@ function extractAIText(aiResponse) {
 }
 
 
-// ==============================================
-// LINE返信
-// ==============================================
-
 async function replyToLine(replyToken, text, env) {
   const response = await fetch(
     "https://api.line.me/v2/bot/message/reply",
@@ -318,7 +344,7 @@ async function replyToLine(replyToken, text, env) {
       headers: {
         "Content-Type": "application/json",
         Authorization:
-          `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+          `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
       },
 
       body: JSON.stringify({
@@ -327,10 +353,10 @@ async function replyToLine(replyToken, text, env) {
         messages: [
           {
             type: "text",
-            text: text.slice(0, 5000),
-          },
-        ],
-      }),
+            text: text.slice(0, 5000)
+          }
+        ]
+      })
     }
   );
 
@@ -341,4 +367,17 @@ async function replyToLine(replyToken, text, env) {
       await response.text()
     );
   }
+}
+
+
+function jsonResponse(data) {
+  return new Response(
+    JSON.stringify(data, null, 2),
+    {
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8",
+        "Cache-Control": "no-store"
+      }
+    }
+  );
 }
