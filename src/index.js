@@ -2,24 +2,19 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // =========================================================
+    // ========================================================
     // Tavilyテスト
-    // ?check=tavily
-    // =========================================================
+    // ========================================================
     if (
       request.method === "GET" &&
       url.searchParams.get("check") === "tavily"
     ) {
       try {
-        const result = await searchTavily(
-          "Nintendo Switch 2 最新情報",
-          {
-            freshness: "week",
-            latest: true,
-            game: "",
-          },
-          env
-        );
+        const q =
+          url.searchParams.get("q") ||
+          "ダダサバイバー 今のイベント";
+
+        const result = await searchTavily(q, "week", env);
 
         return jsonResponse({
           success: true,
@@ -33,35 +28,34 @@ export default {
       }
     }
 
-    // =========================================================
+    // ========================================================
     // AIテスト
-    // ?check=ai
-    // =========================================================
+    // ========================================================
     if (
       request.method === "GET" &&
       url.searchParams.get("check") === "ai"
     ) {
       try {
         const aiResponse = await runAI(
+          env,
           [
             {
               role: "system",
               content:
-                "日本語で短く答えてください。思考過程は出力せず、最終回答だけ返してください。",
+                "日本語で「AIテスト成功」とだけ答えてください。",
             },
             {
               role: "user",
-              content:
-                "「AIテスト成功」とだけ答えて。",
+              content: "テスト",
             },
           ],
-          env,
-          120,
-          0.3
+          300,
+          0.1
         );
 
         return jsonResponse({
           success: true,
+          model: "@cf/qwen/qwen3-30b-a3b-fp8",
           extracted: extractAIText(aiResponse),
           rawResponse: aiResponse,
         });
@@ -73,9 +67,9 @@ export default {
       }
     }
 
-    // =========================================================
+    // ========================================================
     // 通常アクセス
-    // =========================================================
+    // ========================================================
     if (request.method !== "POST") {
       return new Response("ちゃぴAI is running!");
     }
@@ -98,7 +92,7 @@ export default {
 
 
 // ============================================================
-// LINEイベント処理
+// LINEイベント
 // ============================================================
 
 async function handleEvents(events, env) {
@@ -107,9 +101,8 @@ async function handleEvents(events, env) {
       if (event.type !== "message") continue;
       if (event.message?.type !== "text") continue;
 
-      const userMessage = String(
-        event.message.text || ""
-      ).trim();
+      const userMessage =
+        String(event.message.text || "").trim();
 
       if (!userMessage) continue;
 
@@ -125,9 +118,9 @@ async function handleEvents(events, env) {
       const memoryKey =
         `memory:${conversationId}`;
 
-      // ========================================================
-      // 履歴
-      // ========================================================
+      // ======================================================
+      // 履歴読み込み
+      // ======================================================
 
       let history = [];
 
@@ -149,9 +142,9 @@ async function handleEvents(events, env) {
         );
       }
 
-      // ========================================================
-      // 長期記憶
-      // ========================================================
+      // ======================================================
+      // 記憶読み込み
+      // ======================================================
 
       let memories = [];
 
@@ -184,9 +177,9 @@ async function handleEvents(events, env) {
         );
       }
 
-      // ========================================================
-      // 全記憶削除
-      // ========================================================
+      // ======================================================
+      // 全部忘れる
+      // ======================================================
 
       if (
         userMessage.includes("全部忘れて") ||
@@ -205,9 +198,9 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ========================================================
-      // 記憶保存
-      // ========================================================
+      // ======================================================
+      // 記憶登録
+      // ======================================================
 
       const shouldRemember =
         userMessage.includes("覚え") ||
@@ -221,10 +214,7 @@ async function handleEvents(events, env) {
 
         for (const item of newlySaved) {
           memories =
-            upsertMemory(
-              memories,
-              item
-            );
+            upsertMemory(memories, item);
         }
 
         if (newlySaved.length > 0) {
@@ -259,9 +249,9 @@ async function handleEvents(events, env) {
         }
       }
 
-      // ========================================================
+      // ======================================================
       // 名前・呼び方
-      // ========================================================
+      // ======================================================
 
       const profileReply =
         buildExactProfileReply(
@@ -287,9 +277,9 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ========================================================
+      // ======================================================
       // 好きな食べ物
-      // ========================================================
+      // ======================================================
 
       const foodReply =
         buildExactFoodReply(
@@ -315,69 +305,60 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ========================================================
-      // 検索判定
-      // ========================================================
+      // ======================================================
+      // Web検索判定
+      // ======================================================
 
-      const decision =
-        decideWhetherToSearch(
-          userMessage
-        );
+      const searchDecision =
+        decideWhetherToSearch(userMessage);
 
       let searched = false;
-      let searchFailed = false;
+      let searchAttempted = false;
       let webContext = "";
       let sourceUrls = [];
-      let searchMeta = null;
 
-      if (decision.search) {
+      if (searchDecision.search) {
+        searchAttempted = true;
+
         try {
-          const result =
+          const searchResult =
             await searchTavily(
-              decision.query,
-              decision,
+              searchDecision.query,
+              searchDecision.freshness,
               env
             );
 
-          searchMeta = result;
-
-          if (result.results.length > 0) {
+          if (
+            Array.isArray(searchResult.results) &&
+            searchResult.results.length > 0
+          ) {
             searched = true;
 
             webContext =
-              result.results
+              searchResult.results
+                .slice(0, 5)
                 .map(
-                  (item, index) => {
-                    return `
+                  (item, index) => `
 【検索資料 ${index + 1}】
-
 タイトル:
 ${item.title}
 
-URL:
-${item.url}
-
-公開・更新日:
-${item.publishedDate || "不明"}
-
 内容:
 ${item.content}
-`;
-                  }
+
+URL:
+${item.url}
+`
                 )
                 .join("\n");
 
             sourceUrls =
-              result.results
+              searchResult.results
                 .slice(0, 3)
                 .map(item => item.url)
                 .filter(Boolean);
-          } else {
-            searchFailed = true;
           }
         } catch (error) {
-          searchFailed = true;
-
           console.error(
             "SEARCH ERROR:",
             error
@@ -385,42 +366,42 @@ ${item.content}
         }
       }
 
-      // ========================================================
-      // 検索失敗時
-      // ========================================================
+      // ======================================================
+      // 検索したのに0件
+      // ======================================================
 
       if (
-        decision.search &&
-        searchFailed
+        searchAttempted &&
+        !searched
       ) {
-        const failReply =
+        const replyText =
           "ごめん、今うまく検索結果を確認できんかった💦 もう一回聞いてみて〜！";
 
         await saveHistory(
           historyKey,
           history,
           userMessage,
-          failReply,
+          replyText,
           env
         );
 
         await replyToLine(
           event.replyToken,
-          failReply,
+          replyText,
           env
         );
 
         continue;
       }
 
-      // ========================================================
-      // 普通の会話時だけ記憶・履歴をAIへ渡す
-      // ========================================================
+      // ======================================================
+      // 普通の会話だけ記憶を渡す
+      // ======================================================
 
       let memoryContext = "なし";
       let historyForAI = [];
 
-      if (!decision.search) {
+      if (!searched) {
         const relevant =
           selectRelevantMemories(
             userMessage,
@@ -428,7 +409,7 @@ ${item.content}
           );
 
         memoryContext =
-          relevant.length > 0
+          relevant.length
             ? relevant
                 .map(memoryToText)
                 .join("\n")
@@ -438,235 +419,92 @@ ${item.content}
           history.slice(-10);
       }
 
-      // ========================================================
-      // 検索時プロンプト
-      // ========================================================
+      // ======================================================
+      // システムプロンプト
+      // ======================================================
 
-      let systemPrompt = "";
-
-      if (decision.search) {
-        systemPrompt = `
-あなたの名前は「ちゃぴ」。
+      const systemPrompt = `
+あなたの名前は「ちゃぴ」です。
 
 LINEで会話する、
 明るく親しみやすい博多の女の子です。
 
-今から回答する質問は
-Web検索を実行済みです。
+【基本】
+・自分のことは「ちゃぴ」と呼ぶ
+・「俺」「僕」は絶対に使わない
+・自然な博多弁
+・友達とのLINEのように話す
+・雑談は短め
+・質問には結論から答える
+・絵文字は少しだけ
+・知らないことを作らない
 
+【使ってよい表現】
+〜ばい
+〜たい
+〜と？
+〜けん
+よかよ
+〜しとる
+〜しよった
 
-【最重要】
+【使わない表現】
+やで
+やん
+せや
+ほんま
+なんでやねん
+ええで
+ええやろ
+なんや
+やったんや
+あるんや
+できるんや
+なるんや
 
-回答は必ず下の「検索資料」だけを根拠にしてください。
+【Web検索について】
 
-モデル自身の古い知識、
-過去の会話、
-ユーザーの名前、
-ユーザーの好きな食べ物、
-ユーザーの個人情報は
-一切混ぜないでください。
+Web検索済みの場合は、
+検索資料を最優先してください。
 
-検索資料に書かれていない事実を
-想像して補完してはいけません。
+検索資料に書かれていない
+発売日、価格、数字、イベント内容、
+アップデート内容などを
+勝手に作らないでください。
 
-わからないことは
-「検索資料では確認できんかった」
-と答えてください。
-
-
-【最新情報】
-
-今回の質問が最新情報に関する場合、
-
-古い記事を
-最新ニュースのように紹介してはいけません。
-
-検索資料に
-公開日・更新日がある場合は、
-新しい情報を優先してください。
-
-現在の日付は
-${new Date().toISOString().slice(0, 10)}
-です。
-
-2025年の情報と
-2026年の情報がある場合、
-内容が同等なら
-2026年を優先してください。
-
-ただし、
-古い記事でも現在の仕様を説明するために
-必要な場合は使用して構いません。
-
-情報が食い違う場合は、
+複数資料で内容が食い違う場合は、
 断定せず
 「情報が食い違っとる」
 と伝えてください。
 
+「最新」「今」「現在」
+と聞かれた場合は、
+古い情報を最新情報のように
+説明しないでください。
+
+検索資料の日付や内容から
+現在確認できる情報を優先してください。
+
+検索回答には、
+過去の雑談やユーザーの個人情報を
+勝手に混ぜないでください。
 
 【ダダサバイバー】
 
-ダダサバイバーについて質問された場合は、
+検索資料に
+「Survivor.io」
+と書かれている場合、
+日本語版の「ダダサバイバー」と
+同じゲームを指す場合があります。
 
-・現在開催中のイベント
-・イベント交換
-・無課金での優先順位
-・S級軍備
-・装備
-・サバイバー
-・コレクション
-・欠片
-・ペット
-・テックパーツ
-・覚醒
-・アップデート
-・攻略
-
-などについて、
-検索資料を比較して答えてください。
-
-ユーザーが
-「どれが強い？」
-「何を交換？」
-「どう集める？」
-などと聞いた場合は、
-
-最初に結論を短く答え、
-その後に理由を説明してください。
-
-無課金について聞かれた場合は
-課金前提の方法を最優先にしないでください。
-
-
-【話し方】
-
-・自分のことは「ちゃぴ」
-・「俺」「僕」は使わない
-・自然な博多弁
-・結論から答える
-・長すぎない
-・絵文字は少しだけ
-
-
-【使ってよい博多弁】
-
-「〜ばい」
-「〜たい」
-「〜と？」
-「〜けん」
-「よかよ」
-「〜しとる」
-「〜しよった」
-
-
-【禁止する関西弁】
-
-「やで」
-「やん」
-「せや」
-「ほんま」
-「なんでやねん」
-「ええで」
-「ええやろ」
-「なんや」
-「みたいや」
-「やったんや」
-「あるんや」
-「できるんや」
-「なるんや」
-
+ただし資料にないイベント内容、
+開催期間、報酬、性能などを
+想像で追加しないでください。
 
 【URL】
 
-回答本文にはURLを書かないでください。
-
-参考URLは
-プログラム側で自動追加します。
-
-
-【Markdown】
-
-以下は禁止です。
-
-**
-#
-Markdownリンク
-
-
-【検索資料】
-
-${webContext}
-`;
-      }
-
-      // ========================================================
-      // 通常会話プロンプト
-      // ========================================================
-
-      if (!decision.search) {
-        systemPrompt = `
-あなたの名前は「ちゃぴ」。
-
-LINEにいる、
-明るく親しみやすい博多の女の子です。
-
-友達とのLINEのように
-自然に会話してください。
-
-
-【話し方】
-
-・自分のことは「ちゃぴ」
-・「俺」「僕」は使わない
-・自然な博多弁
-・雑談は短め
-・質問は結論から
-・絵文字は少しだけ
-
-
-【使ってよい博多弁】
-
-「〜ばい」
-「〜たい」
-「〜と？」
-「〜けん」
-「よかよ」
-「〜しとる」
-「〜しよった」
-
-
-【禁止する関西弁】
-
-「やで」
-「やん」
-「せや」
-「ほんま」
-「なんでやねん」
-「ええで」
-「ええやろ」
-「なんや」
-「みたいや」
-「やったんや」
-「あるんや」
-「できるんや」
-「なるんや」
-
-
-【記憶について】
-
-下に記憶がある場合だけ使用してください。
-
-記憶にない内容を
-「覚えている」と言ってはいけません。
-
-ユーザーが聞いていない記憶を
-突然話題に出さないでください。
-
-
-【今回使ってよい記憶】
-
-${memoryContext}
-
+本文にはURLを書かないでください。
+参考URLはプログラム側で追加します。
 
 【Markdown禁止】
 
@@ -674,13 +512,20 @@ ${memoryContext}
 #
 Markdownリンク
 
-は禁止です。
-`;
-      }
+は使わないでください。
 
-      // ========================================================
-      // AIメッセージ
-      // ========================================================
+【長期記憶】
+
+${memoryContext}
+
+【Web検索状態】
+
+${searched ? "Web検索済み" : "Web検索なし"}
+
+【検索資料】
+
+${webContext || "なし"}
+`;
 
       const messages = [
         {
@@ -692,23 +537,38 @@ Markdownリンク
 
         {
           role: "user",
-          content:
-            userMessage +
-            "\n\n/no_think",
+          content: userMessage,
         },
       ];
 
-      // ========================================================
-      // AI実行
-      // ========================================================
+      // ======================================================
+      // AI
+      // ======================================================
 
-      const aiResponse =
-        await runAI(
-          messages,
-          env,
-          decision.search ? 700 : 500,
-          decision.search ? 0.2 : 0.6
+      let aiResponse;
+
+      try {
+        aiResponse =
+          await runAI(
+            env,
+            messages,
+            searched ? 900 : 600,
+            searched ? 0.15 : 0.5
+          );
+      } catch (error) {
+        console.error(
+          "AI ERROR:",
+          error
         );
+
+        await replyToLine(
+          event.replyToken,
+          "ごめん、今AIの返事でエラーが出た💦 もう一回送ってみて〜！",
+          env
+        );
+
+        continue;
+      }
 
       let replyText =
         extractAIText(aiResponse);
@@ -721,12 +581,11 @@ Markdownリンク
       replyText =
         cleanReply(replyText);
 
-      // ========================================================
+      // ======================================================
       // 参考URL
-      // ========================================================
+      // ======================================================
 
-      let lineReply =
-        replyText;
+      let lineReply = replyText;
 
       if (
         searched &&
@@ -745,9 +604,9 @@ Markdownリンク
             .join("\n");
       }
 
-      // ========================================================
+      // ======================================================
       // 履歴保存
-      // ========================================================
+      // ======================================================
 
       await saveHistory(
         historyKey,
@@ -756,10 +615,6 @@ Markdownリンク
         replyText,
         env
       );
-
-      // ========================================================
-      // LINE返信
-      // ========================================================
 
       await replyToLine(
         event.replyToken,
@@ -782,51 +637,41 @@ Markdownリンク
 // ============================================================
 
 async function runAI(
-  messages,
   env,
-  maxTokens,
-  temperature
+  messages,
+  maxTokens = 600,
+  temperature = 0.4
 ) {
   return await env.AI.run(
     "@cf/qwen/qwen3-30b-a3b-fp8",
     {
       messages,
-
-      max_tokens:
-        maxTokens,
-
+      max_tokens: maxTokens,
       temperature,
-
-      top_p: 0.8,
-
-      repetition_penalty: 1.05,
+      top_p: 0.85,
+      repetition_penalty: 1.08,
     }
   );
 }
 
 
 // ============================================================
-// 検索判定
+// 検索するか判定
 // ============================================================
 
 function decideWhetherToSearch(message) {
   const text =
     String(message || "").trim();
 
-  // 記憶確認は検索しない
   const memoryWords = [
     "覚えてる",
     "覚えとる",
     "覚えてて",
-    "覚えといて",
-    "記憶して",
     "好きな食べ物",
-    "俺の名前",
-    "私の名前",
-    "僕の名前",
+    "名前",
     "呼び方",
-    "俺のこと覚え",
-    "私のこと覚え",
+    "俺のこと",
+    "私のこと",
   ];
 
   if (
@@ -838,61 +683,8 @@ function decideWhetherToSearch(message) {
       search: false,
       query: "",
       freshness: "none",
-      latest: false,
-      game: "",
     };
   }
-
-  // ==========================================================
-  // ダダサバ判定
-  // ==========================================================
-
-  const survivorWords = [
-    "ダダサバ",
-    "ダダサバイバー",
-    "Survivor.io",
-    "survivor.io",
-    "S級軍備",
-    "s級軍備",
-    "メモリーエディター",
-    "コレクションの欠片",
-    "エクセレントコレクション",
-    "エピックコレクション",
-    "キティース",
-    "タローシア",
-  ];
-
-  const isSurvivor =
-    survivorWords.some(
-      word =>
-        text.toLowerCase().includes(
-          word.toLowerCase()
-        )
-    );
-
-  if (isSurvivor) {
-    const latest =
-      containsLatestIntent(text) ||
-      containsChangingGameIntent(text);
-
-    return {
-      search: true,
-
-      query:
-        buildSurvivorQuery(text),
-
-      freshness:
-        latest ? "month" : "none",
-
-      latest,
-
-      game: "survivor",
-    };
-  }
-
-  // ==========================================================
-  // 一般Web検索
-  // ==========================================================
 
   const searchWords = [
     "調べて",
@@ -900,7 +692,10 @@ function decideWhetherToSearch(message) {
     "最新",
     "ニュース",
     "現在",
-    "今の",
+    "今来てる",
+    "今きてる",
+    "今やってる",
+    "開催中",
     "今日",
     "価格",
     "値段",
@@ -912,14 +707,11 @@ function decideWhetherToSearch(message) {
     "順位",
     "営業時間",
     "天気",
-    "新作",
-    "開催中",
   ];
 
   const shouldSearch =
     searchWords.some(
-      word =>
-        text.includes(word)
+      word => text.includes(word)
     );
 
   if (!shouldSearch) {
@@ -927,146 +719,61 @@ function decideWhetherToSearch(message) {
       search: false,
       query: "",
       freshness: "none",
-      latest: false,
-      game: "",
     };
   }
-
-  const latest =
-    containsLatestIntent(text);
 
   let freshness = "none";
 
   if (
     text.includes("今日") ||
     text.includes("現在") ||
-    text.includes("今の")
+    text.includes("今来てる") ||
+    text.includes("今きてる") ||
+    text.includes("今やってる") ||
+    text.includes("開催中")
   ) {
-    freshness = "day";
+    freshness = "week";
   } else if (
-    latest
+    text.includes("最新") ||
+    text.includes("最近") ||
+    text.includes("ニュース")
   ) {
     freshness = "week";
   }
 
   return {
     search: true,
-
-    query:
-      cleanSearchQuery(text),
-
+    query: buildSearchQuery(text),
     freshness,
-
-    latest,
-
-    game: "",
   };
 }
 
 
 // ============================================================
-// 最新意図
+// 検索語を作る
 // ============================================================
 
-function containsLatestIntent(text) {
-  const words = [
-    "最新",
-    "最近",
-    "今日",
-    "現在",
-    "今の",
-    "今来てる",
-    "今きてる",
-    "開催中",
-    "ニュース",
-    "アップデート",
-    "新キャラ",
-    "新装備",
-    "新イベント",
-  ];
+function buildSearchQuery(text) {
+  let query =
+    String(text || "")
+      .replace(/調べて教えて/g, " ")
+      .replace(/調べて/g, " ")
+      .replace(/検索して教えて/g, " ")
+      .replace(/検索して/g, " ")
+      .replace(/教えて/g, " ")
+      .replace(/[？?！!]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
-  return words.some(
-    word =>
-      text.includes(word)
-  );
-}
-
-
-// ============================================================
-// 変化しやすいゲーム情報
-// ============================================================
-
-function containsChangingGameIntent(text) {
-  const words = [
-    "イベント",
-    "交換",
-    "強い",
-    "最強",
-    "おすすめ",
-    "優先",
-    "無課金",
-    "入手",
-    "集め",
-    "軍備",
-    "装備",
-    "サバイバー",
-    "キャラ",
-    "コレクション",
-    "欠片",
-    "覚醒",
-    "ペット",
-    "テックパーツ",
-  ];
-
-  return words.some(
-    word =>
-      text.includes(word)
-  );
-}
-
-
-// ============================================================
-// ダダサバ検索語
-// ============================================================
-
-function buildSurvivorQuery(text) {
-  let cleaned =
-    cleanSearchQuery(text);
-
+  // ダダサバイバーは英語名も追加
   if (
-    !cleaned.includes("ダダサバイバー") &&
-    !cleaned
-      .toLowerCase()
-      .includes("survivor.io")
+    query.includes("ダダサバイバー") &&
+    !query.toLowerCase().includes("survivor.io")
   ) {
-    cleaned =
-      `ダダサバイバー ${cleaned}`;
+    query += " Survivor.io";
   }
 
-  return cleaned.slice(0, 300);
-}
-
-
-// ============================================================
-// 一般検索語クリーニング
-// ============================================================
-
-function cleanSearchQuery(text) {
-  return String(text || "")
-    .replace(
-      /調べて(教えて)?/g,
-      ""
-    )
-    .replace(
-      /検索して(教えて)?/g,
-      ""
-    )
-    .replace(
-      /教えて$/g,
-      ""
-    )
-    .trim()
-    .slice(0, 300);
+  return query.slice(0, 300);
 }
 
 
@@ -1076,7 +783,7 @@ function cleanSearchQuery(text) {
 
 async function searchTavily(
   query,
-  options,
+  freshness,
   env
 ) {
   if (!env.TAVILY_API_KEY) {
@@ -1085,23 +792,14 @@ async function searchTavily(
     );
   }
 
-  const freshness =
-    options?.freshness || "none";
-
-  const latest =
-    Boolean(options?.latest);
-
-  const game =
-    options?.game || "";
-
   const cacheKey =
     `tavily:v20:${simpleHash(
-      `${query}:${freshness}:${latest}:${game}`
+      `${query}:${freshness}`
     )}`;
 
-  // ==========================================================
+  // ========================================================
   // キャッシュ
-  // ==========================================================
+  // ========================================================
 
   try {
     const cached =
@@ -1125,221 +823,200 @@ async function searchTavily(
     );
   }
 
-  const preferredDomains =
-    detectPreferredDomains(
-      query,
-      game
-    );
-
   let rawResults = [];
 
-  // ==========================================================
-  // 1. 最新系
-  // ==========================================================
+  // ========================================================
+  // 1回目
+  // 期間あり一般検索
+  // ========================================================
 
-  if (latest) {
-    const latestResults =
+  try {
+    const first =
       await callTavily(
         query,
         freshness,
         env,
-        [],
-        true
+        []
       );
 
     rawResults =
       mergeResults(
         rawResults,
-        latestResults
+        first
       );
+  } catch (error) {
+    console.error(
+      "TAVILY FIRST ERROR:",
+      error
+    );
   }
 
-  // ==========================================================
-  // 2. 信頼サイト
-  // ==========================================================
+  // ========================================================
+  // 2回目
+  // ダダサバなら検索語を変えて追加検索
+  // ========================================================
 
   if (
-    preferredDomains.length > 0
+    isSurvivorQuery(query)
   ) {
-    const trusted =
-      await callTavily(
-        query,
-        freshness,
-        env,
-        preferredDomains,
-        false
-      );
+    const extraQueries = [
+      "Survivor.io latest event",
+      "Survivor.io current event",
+      "ダダサバイバー イベント 最新",
+    ];
 
-    rawResults =
-      mergeResults(
-        rawResults,
-        trusted
-      );
-  }
+    for (const extraQuery of extraQueries) {
+      try {
+        const extra =
+          await callTavily(
+            extraQuery,
+            freshness,
+            env,
+            []
+          );
 
-  // ==========================================================
-  // 3. 一般検索
-  // ==========================================================
+        rawResults =
+          mergeResults(
+            rawResults,
+            extra
+          );
 
-  if (
-    rawResults.length < 5
-  ) {
-    const general =
-      await callTavily(
-        query,
-        freshness,
-        env,
-        [],
-        false
-      );
-
-    rawResults =
-      mergeResults(
-        rawResults,
-        general
-      );
-  }
-
-  // ==========================================================
-  // 4. 期間指定で少なすぎる場合
-  // ==========================================================
-
-  if (
-    rawResults.length < 4 &&
-    freshness !== "none"
-  ) {
-    const fallback =
-      await callTavily(
-        query,
-        "none",
-        env,
-        preferredDomains,
-        false
-      );
-
-    rawResults =
-      mergeResults(
-        rawResults,
-        fallback
-      );
-  }
-
-  // ==========================================================
-  // 整形
-  // ==========================================================
-
-  const processed =
-    rawResults
-      .filter(
-        item =>
-          isSafeSearchResult(item)
-      )
-      .map(
-        item => {
-          const publishedDate =
-            item.published_date ||
-            item.publishedDate ||
-            "";
-
-          return {
-            title:
-              String(
-                item.title || ""
-              ),
-
-            url:
-              String(
-                item.url || ""
-              ),
-
-            content:
-              String(
-                item.content || ""
-              ).slice(0, 2200),
-
-            score:
-              typeof item.score === "number"
-                ? item.score
-                : 0,
-
-            publishedDate:
-              String(
-                publishedDate || ""
-              ),
-
-            trust:
-              trustScore(
-                item.url || "",
-                preferredDomains,
-                game
-              ),
-
-            relevance:
-              keywordOverlap(
-                query,
-                `${item.title || ""} ${item.content || ""}`
-              ),
-
-            freshnessScore:
-              calculateFreshnessScore(
-                publishedDate,
-                item.title,
-                item.content
-              ),
-          };
+        if (rawResults.length >= 8) {
+          break;
         }
-      )
+      } catch (error) {
+        console.error(
+          "SURVIVOR SEARCH ERROR:",
+          error
+        );
+      }
+    }
+  }
+
+  // ========================================================
+  // 3回目
+  // 少なければ期間制限なし
+  // ========================================================
+
+  if (rawResults.length < 3) {
+    try {
+      const retry =
+        await callTavily(
+          query,
+          "none",
+          env,
+          []
+        );
+
+      rawResults =
+        mergeResults(
+          rawResults,
+          retry
+        );
+    } catch (error) {
+      console.error(
+        "TAVILY RETRY ERROR:",
+        error
+      );
+    }
+  }
+
+  // ========================================================
+  // 結果整理
+  //
+  // 重要：
+  // 日本語文章の完全一致率で
+  // 結果を捨てない
+  // ========================================================
+
+  let results =
+    rawResults
+      .filter(isSafeSearchResult)
       .filter(
         item =>
-          item.title &&
-          item.url &&
-          item.score >= 0.25 &&
-          item.relevance > 0
+          item?.title &&
+          item?.url &&
+          (
+            typeof item.score !== "number" ||
+            item.score >= 0.15
+          )
+      )
+      .map(item => ({
+        title:
+          String(item.title || ""),
+
+        url:
+          String(item.url || ""),
+
+        content:
+          String(
+            item.content || ""
+          ).slice(0, 2200),
+
+        score:
+          typeof item.score === "number"
+            ? item.score
+            : 0,
+
+        relevance:
+          calculateRelevance(
+            query,
+            item
+          ),
+
+        trust:
+          trustScore(item.url || ""),
+      }))
+      .sort(
+        (a, b) => {
+          const aTotal =
+            a.score +
+            a.relevance * 1.5 +
+            a.trust;
+
+          const bTotal =
+            b.score +
+            b.relevance * 1.5 +
+            b.trust;
+
+          return bTotal - aTotal;
+        }
       );
 
-  // ==========================================================
-  // 並び替え
-  // ==========================================================
+  // ========================================================
+  // ダダサバ検索では
+  // Survivor.io関連を優先
+  // ========================================================
 
-  processed.sort(
-    (a, b) => {
-      const aTotal =
-        a.trust * 3 +
-        a.relevance * 3 +
-        a.score * 2 +
-        (
-          latest
-            ? a.freshnessScore * 4
-            : a.freshnessScore
+  if (isSurvivorQuery(query)) {
+    const survivorResults =
+      results.filter(item =>
+        isSurvivorResult(item)
+      );
+
+    if (survivorResults.length > 0) {
+      const others =
+        results.filter(
+          item =>
+            !isSurvivorResult(item)
         );
 
-      const bTotal =
-        b.trust * 3 +
-        b.relevance * 3 +
-        b.score * 2 +
-        (
-          latest
-            ? b.freshnessScore * 4
-            : b.freshnessScore
-        );
-
-      return bTotal - aTotal;
+      results = [
+        ...survivorResults,
+        ...others,
+      ];
     }
-  );
+  }
 
-  const results =
-    processed
-      .slice(0, 6)
-      .map(
-        item => ({
-          title: item.title,
-          url: item.url,
-          content: item.content,
-          score: item.score,
-          publishedDate:
-            item.publishedDate,
-        })
-      );
+  results =
+    results
+      .slice(0, 5)
+      .map(item => ({
+        title: item.title,
+        url: item.url,
+        content: item.content,
+        score: item.score,
+      }));
 
   const result = {
     query,
@@ -1348,17 +1025,12 @@ async function searchTavily(
       new Date().toISOString(),
   };
 
-  // ==========================================================
-  // キャッシュ
-  // ==========================================================
-
   try {
     await env.MEMORY.put(
       cacheKey,
       JSON.stringify(result),
       {
-        expirationTtl:
-          latest ? 300 : 900,
+        expirationTtl: 600,
       }
     );
   } catch (error) {
@@ -1380,31 +1052,20 @@ async function callTavily(
   query,
   freshness,
   env,
-  includeDomains,
-  newsMode
+  includeDomains = []
 ) {
   const requestBody = {
     query,
 
-    search_depth:
-      "basic",
+    search_depth: "advanced",
 
-    max_results:
-      8,
+    max_results: 10,
 
-    include_answer:
-      false,
+    include_answer: false,
 
-    include_raw_content:
-      false,
+    include_raw_content: false,
 
-    include_images:
-      false,
-
-    topic:
-      newsMode
-        ? "news"
-        : "general",
+    include_images: false,
 
     exclude_domains: [
       "xvideos.com",
@@ -1429,8 +1090,7 @@ async function callTavily(
   if (
     freshness === "day" ||
     freshness === "week" ||
-    freshness === "month" ||
-    freshness === "year"
+    freshness === "month"
   ) {
     requestBody.time_range =
       freshness;
@@ -1451,9 +1111,7 @@ async function callTavily(
         },
 
         body:
-          JSON.stringify(
-            requestBody
-          ),
+          JSON.stringify(requestBody),
       }
     );
 
@@ -1469,96 +1127,172 @@ async function callTavily(
   const data =
     JSON.parse(text);
 
-  return Array.isArray(
-    data?.results
-  )
+  return Array.isArray(data?.results)
     ? data.results
     : [];
 }
 
 
 // ============================================================
-// 優先ドメイン
+// ダダサバ判定
 // ============================================================
 
-function detectPreferredDomains(
-  query,
-  game
-) {
+function isSurvivorQuery(text) {
+  const lower =
+    String(text || "").toLowerCase();
+
+  return (
+    lower.includes("ダダサバ") ||
+    lower.includes("survivor.io") ||
+    lower.includes("survivor io")
+  );
+}
+
+
+function isSurvivorResult(item) {
   const text =
+    `${item?.title || ""} ${item?.content || ""}`
+      .toLowerCase();
+
+  return (
+    text.includes("survivor.io") ||
+    text.includes("survivor io") ||
+    text.includes("ダダサバ")
+  );
+}
+
+
+// ============================================================
+// 関連度
+// ============================================================
+
+function calculateRelevance(
+  query,
+  item
+) {
+  const target =
+    `${item?.title || ""} ${item?.content || ""}`
+      .toLowerCase();
+
+  const q =
     String(query || "")
       .toLowerCase();
 
-  // ダダサバイバー
+  let score = 0;
+
+  // ダダサバ
   if (
-    game === "survivor" ||
-    text.includes("ダダサバ") ||
-    text.includes("survivor.io")
+    isSurvivorQuery(q)
   ) {
-    return [
-      "habby.com",
-      "game8.jp",
-      "gamewith.jp",
-      "gamerch.com",
-      "wikiwiki.jp",
-    ];
+    if (
+      target.includes("survivor.io") ||
+      target.includes("survivor io") ||
+      target.includes("ダダサバ")
+    ) {
+      score += 4;
+    }
+
+    if (
+      q.includes("イベント") &&
+      (
+        target.includes("event") ||
+        target.includes("イベント")
+      )
+    ) {
+      score += 2;
+    }
+
+    if (
+      q.includes("装備") &&
+      (
+        target.includes("equipment") ||
+        target.includes("gear") ||
+        target.includes("装備")
+      )
+    ) {
+      score += 2;
+    }
+
+    if (
+      q.includes("サバイバー") &&
+      (
+        target.includes("survivor") ||
+        target.includes("サバイバー")
+      )
+    ) {
+      score += 1;
+    }
+
+    return score;
   }
 
-  // Nintendo
-  if (
-    text.includes("nintendo") ||
-    text.includes("switch") ||
-    text.includes("任天堂")
-  ) {
-    return [
-      "nintendo.com",
-      "nintendo.co.jp",
-      "famitsu.com",
-      "gamewith.jp",
-      "game8.jp",
-    ];
+  // その他の検索
+  const keywords =
+    extractSearchKeywords(q);
+
+  for (const word of keywords) {
+    if (
+      target.includes(
+        word.toLowerCase()
+      )
+    ) {
+      score += 1;
+    }
   }
 
-  // PlayStation
-  if (
-    text.includes("playstation") ||
-    text.includes("ps5") ||
-    text.includes("sony")
-  ) {
-    return [
-      "playstation.com",
-      "sony.com",
-      "famitsu.com",
-      "gamewith.jp",
-      "game8.jp",
-    ];
+  return score;
+}
+
+
+// ============================================================
+// 日本語対応キーワード抽出
+// ============================================================
+
+function extractSearchKeywords(text) {
+  const cleaned =
+    String(text || "")
+      .replace(
+        /最新情報|最新|最近|調べて|検索して|教えて|について|とは|ニュース|現在|今日/g,
+        " "
+      )
+      .replace(
+        /[？?！!。、,.]/g,
+        " "
+      );
+
+  const result = [];
+
+  const english =
+    cleaned.match(
+      /[a-zA-Z0-9._-]{2,}/g
+    ) || [];
+
+  result.push(...english);
+
+  const japanese =
+    cleaned.match(
+      /[ぁ-んァ-ヶ一-龠ー]{2,}/g
+    ) || [];
+
+  for (const chunk of japanese) {
+    if (chunk.length <= 8) {
+      result.push(chunk);
+    } else {
+      for (
+        let i = 0;
+        i < chunk.length - 1;
+        i += 2
+      ) {
+        result.push(
+          chunk.slice(i, i + 4)
+        );
+      }
+    }
   }
 
-  // Apple
-  if (
-    text.includes("iphone") ||
-    text.includes("apple")
-  ) {
-    return [
-      "apple.com",
-      "support.apple.com",
-    ];
-  }
-
-  // Microsoft
-  if (
-    text.includes("microsoft") ||
-    text.includes("windows") ||
-    text.includes("xbox")
-  ) {
-    return [
-      "microsoft.com",
-      "support.microsoft.com",
-      "xbox.com",
-    ];
-  }
-
-  return [];
+  return [
+    ...new Set(result),
+  ].slice(0, 15);
 }
 
 
@@ -1566,183 +1300,44 @@ function detectPreferredDomains(
 // 信頼度
 // ============================================================
 
-function trustScore(
-  url,
-  preferredDomains,
-  game
-) {
+function trustScore(url) {
   const domain =
     getDomain(url);
 
-  for (
-    const preferred of preferredDomains
-  ) {
-    if (
-      domain === preferred ||
-      domain.endsWith(
-        `.${preferred}`
-      )
-    ) {
-      return 3;
-    }
-  }
-
-  if (game === "survivor") {
-    const survivorTrusted = [
-      "habby.com",
-      "game8.jp",
-      "gamewith.jp",
-      "gamerch.com",
-      "wikiwiki.jp",
-    ];
-
-    if (
-      survivorTrusted.some(
-        trusted =>
-          domain === trusted ||
-          domain.endsWith(
-            `.${trusted}`
-          )
-      )
-    ) {
-      return 2;
-    }
-  }
-
-  const generalTrusted = [
+  const official = [
     "nintendo.com",
     "nintendo.co.jp",
     "apple.com",
     "microsoft.com",
-    "sony.com",
     "playstation.com",
+  ];
+
+  const trusted = [
     "famitsu.com",
     "gamewith.jp",
     "game8.jp",
+    "4gamer.net",
+    "automaton-media.com",
   ];
 
   if (
-    generalTrusted.some(
-      trusted =>
-        domain === trusted ||
-        domain.endsWith(
-          `.${trusted}`
-        )
+    official.some(
+      item =>
+        domain === item ||
+        domain.endsWith(`.${item}`)
     )
   ) {
-    return 2;
-  }
-
-  return 0;
-}
-
-
-// ============================================================
-// 新しさスコア
-// ============================================================
-
-function calculateFreshnessScore(
-  publishedDate,
-  title,
-  content
-) {
-  let date = null;
-
-  if (publishedDate) {
-    const parsed =
-      new Date(publishedDate);
-
-    if (
-      !Number.isNaN(
-        parsed.getTime()
-      )
-    ) {
-      date = parsed;
-    }
-  }
-
-  // published_dateがない場合、
-  // タイトルや本文の日付を軽く見る
-  if (!date) {
-    const text =
-      `${title || ""} ${content || ""}`;
-
-    const matches =
-      [
-        ...text.matchAll(
-          /(20\d{2})[年\/\-](\d{1,2})[月\/\-](\d{1,2})?/g
-        ),
-      ];
-
-    let newest = null;
-
-    for (const match of matches) {
-      const year =
-        Number(match[1]);
-
-      const month =
-        Number(match[2]);
-
-      const day =
-        Number(match[3] || 1);
-
-      const candidate =
-        new Date(
-          Date.UTC(
-            year,
-            month - 1,
-            day
-          )
-        );
-
-      if (
-        !newest ||
-        candidate > newest
-      ) {
-        newest = candidate;
-      }
-    }
-
-    date = newest;
-  }
-
-  if (!date) {
-    return 0;
-  }
-
-  const now =
-    new Date();
-
-  const diffMs =
-    now.getTime() -
-    date.getTime();
-
-  const days =
-    diffMs /
-    86400000;
-
-  if (days < -30) {
-    return 0;
-  }
-
-  if (days <= 1) {
-    return 5;
-  }
-
-  if (days <= 7) {
-    return 4;
-  }
-
-  if (days <= 30) {
     return 3;
   }
 
-  if (days <= 90) {
-    return 2;
-  }
-
-  if (days <= 365) {
-    return 1;
+  if (
+    trusted.some(
+      item =>
+        domain === item ||
+        domain.endsWith(`.${item}`)
+    )
+  ) {
+    return 1.5;
   }
 
   return 0;
@@ -1750,14 +1345,13 @@ function calculateFreshnessScore(
 
 
 // ============================================================
-// 安全判定
+// 安全
 // ============================================================
 
 function isSafeSearchResult(item) {
   const url =
-    String(
-      item?.url || ""
-    ).toLowerCase();
+    String(item?.url || "")
+      .toLowerCase();
 
   const blocked = [
     "xvideos.",
@@ -1778,72 +1372,7 @@ function isSafeSearchResult(item) {
 
 
 // ============================================================
-// 関連度
-// ============================================================
-
-function keywordOverlap(
-  query,
-  target
-) {
-  const words =
-    extractKeywords(query);
-
-  if (
-    words.length === 0
-  ) {
-    return 1;
-  }
-
-  const normalized =
-    String(target || "")
-      .toLowerCase();
-
-  let matched = 0;
-
-  for (const word of words) {
-    if (
-      normalized.includes(
-        word.toLowerCase()
-      )
-    ) {
-      matched++;
-    }
-  }
-
-  return (
-    matched /
-    words.length
-  );
-}
-
-
-function extractKeywords(text) {
-  const cleaned =
-    String(text || "")
-      .replace(
-        /[？?！!。、,.]/g,
-        " "
-      )
-      .replace(
-        /(最新情報|最新|最近|調べて|検索して|教えて|について|とは|ニュース|現在|今日)/g,
-        " "
-      );
-
-  return cleaned
-    .split(/\s+/)
-    .map(
-      word => word.trim()
-    )
-    .filter(
-      word =>
-        word.length >= 2
-    )
-    .slice(0, 8);
-}
-
-
-// ============================================================
-// 検索結果結合
+// 検索結果統合
 // ============================================================
 
 function mergeResults(a, b) {
@@ -1856,13 +1385,9 @@ function mergeResults(a, b) {
       ...(b || []),
     ]
   ) {
-    if (!item?.url) {
-      continue;
-    }
+    if (!item?.url) continue;
 
-    if (
-      !map.has(item.url)
-    ) {
+    if (!map.has(item.url)) {
       map.set(
         item.url,
         item
@@ -1975,12 +1500,8 @@ function migrateAllMemories(raw) {
     const extracted =
       extractMemories(text);
 
-    if (
-      extracted.length > 0
-    ) {
-      for (
-        const converted of extracted
-      ) {
+    if (extracted.length > 0) {
+      for (const converted of extracted) {
         result =
           upsertMemory(
             result,
@@ -1995,22 +1516,6 @@ function migrateAllMemories(raw) {
       }
 
       changed = true;
-    } else {
-      result.push({
-        type: "general",
-
-        key:
-          item?.key ||
-          "general_" +
-          simpleHash(text),
-
-        value: text,
-
-        text,
-
-        savedAt:
-          item?.savedAt || "",
-      });
     }
   }
 
@@ -2051,20 +1556,18 @@ function upsertMemory(
 
 
 // ============================================================
-// 記憶保存返答
+// 記憶した時の返事
 // ============================================================
 
 function buildSavedReply(items) {
   const name =
     items.find(
-      item =>
-        item.key === "name"
+      item => item.key === "name"
     )?.value;
 
   const nickname =
     items.find(
-      item =>
-        item.key === "nickname"
+      item => item.key === "nickname"
     )?.value;
 
   const food =
@@ -2073,10 +1576,7 @@ function buildSavedReply(items) {
         item.key === "favorite_food"
     )?.value;
 
-  if (
-    name &&
-    nickname
-  ) {
+  if (name && nickname) {
     return (
       `覚えたよ〜😊 名前は「${name}」、` +
       `呼ぶ時は「${nickname}」ね！`
@@ -2106,7 +1606,7 @@ function buildSavedReply(items) {
 
 
 // ============================================================
-// 名前・呼び方確認
+// 名前回答
 // ============================================================
 
 function buildExactProfileReply(
@@ -2173,7 +1673,7 @@ function buildExactProfileReply(
 
 
 // ============================================================
-// 好きな食べ物確認
+// 食べ物回答
 // ============================================================
 
 function buildExactFoodReply(
@@ -2269,25 +1769,13 @@ function selectRelevantMemories(
 }
 
 
-// ============================================================
-// 記憶テキスト化
-// ============================================================
-
 function memoryToText(item) {
-  if (
-    item.key === "name"
-  ) {
-    return (
-      `名前: ${item.value}`
-    );
+  if (item.key === "name") {
+    return `名前: ${item.value}`;
   }
 
-  if (
-    item.key === "nickname"
-  ) {
-    return (
-      `呼び方: ${item.value}`
-    );
+  if (item.key === "nickname") {
+    return `呼び方: ${item.value}`;
   }
 
   if (
@@ -2298,52 +1786,33 @@ function memoryToText(item) {
     );
   }
 
-  return (
-    item.text ||
-    item.value ||
-    ""
-  );
+  return "";
 }
 
 
 // ============================================================
-// 記憶値クリーニング
+// 記憶文字整形
 // ============================================================
 
 function cleanMemoryValue(value) {
   return String(value || "")
-    .replace(
-      /って.*$/g,
-      ""
-    )
-    .replace(
-      /覚えて.*$/g,
-      ""
-    )
-    .replace(
-      /でいい.*$/g,
-      ""
-    )
+    .replace(/って.*$/g, "")
+    .replace(/覚えて.*$/g, "")
+    .replace(/でいい.*$/g, "")
     .trim();
 }
 
 
 function cleanFoodValue(value) {
   return String(value || "")
-    .replace(
-      /って.*$/g,
-      ""
-    )
-    .replace(
-      /覚えて.*$/g,
-      ""
-    )
+    .replace(/って.*$/g, "")
+    .replace(/覚えて.*$/g, "")
     .trim();
 }
 
 
 // ============================================================
-// AI回答抽出
+// AI返答取得
 // ============================================================
 
 function extractAIText(aiResponse) {
@@ -2351,7 +1820,7 @@ function extractAIText(aiResponse) {
     return "";
   }
 
-  const choice =
+  const content =
     aiResponse
       ?.choices
       ?.[0]
@@ -2359,30 +1828,24 @@ function extractAIText(aiResponse) {
       ?.content;
 
   if (
-    typeof choice === "string" &&
-    choice.trim()
+    typeof content === "string" &&
+    content.trim()
   ) {
-    return choice.trim();
+    return content.trim();
   }
 
   if (
-    typeof aiResponse?.response ===
+    typeof aiResponse.response ===
       "string" &&
     aiResponse.response.trim()
   ) {
-    return (
-      aiResponse.response.trim()
-    );
+    return aiResponse.response.trim();
   }
 
   if (
     typeof aiResponse
       ?.result
-      ?.response === "string" &&
-    aiResponse
-      .result
-      .response
-      .trim()
+      ?.response === "string"
   ) {
     return (
       aiResponse
@@ -2402,26 +1865,13 @@ function extractAIText(aiResponse) {
 
 function cleanReply(text) {
   return String(text || "")
-    .replace(
-      /<think>[\s\S]*?<\/think>/gi,
-      ""
-    )
-    .replace(
-      /\*\*/g,
-      ""
-    )
-    .replace(
-      /^#{1,6}\s*/gm,
-      ""
-    )
+    .replace(/\*\*/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
     .replace(
       /https?:\/\/[^\s]+/gi,
       ""
     )
-    .replace(
-      /ちゃび/g,
-      "ちゃぴ"
-    )
+    .replace(/ちゃび/g, "ちゃぴ")
     .replace(
       /やったんや/g,
       "やったとよ"
@@ -2442,20 +1892,15 @@ function cleanReply(text) {
       /みたいや/g,
       "みたい"
     )
-    .replace(
-      /やで/g,
-      "ばい"
-    )
-    .replace(
-      /ほんま/g,
-      "ほんと"
-    )
+    .replace(/やで/g, "ばい")
+    .replace(/ほんま/g, "ほんと")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
 
 // ============================================================
-// 履歴保存
+// 履歴
 // ============================================================
 
 async function saveHistory(
@@ -2565,10 +2010,7 @@ async function replyToLine(
 
                 text:
                   String(text)
-                    .slice(
-                      0,
-                      5000
-                    ),
+                    .slice(0, 5000),
               },
             ],
           }),
@@ -2586,7 +2028,7 @@ async function replyToLine(
 
 
 // ============================================================
-// JSONレスポンス
+// JSON
 // ============================================================
 
 function jsonResponse(data) {
@@ -2596,7 +2038,6 @@ function jsonResponse(data) {
       null,
       2
     ),
-
     {
       headers: {
         "Content-Type":
