@@ -1,112 +1,126 @@
 export default {
-  async fetch(request, env) {
-    // ブラウザで開いた時の確認用
+  async fetch(request, env, ctx) {
     if (request.method !== "POST") {
       return new Response("ちゃぴAI is running!");
     }
 
+    let body;
+
     try {
-      const body = await request.json();
-      const events = body.events || [];
+      body = await request.json();
+    } catch (error) {
+      return new Response("OK");
+    }
 
-      for (const event of events) {
-        if (event.type !== "message") continue;
-        if (event.message?.type !== "text") continue;
+    const events = body.events || [];
 
-        const userMessage = event.message.text;
+    // LINEには先に200を返し、AI処理はバックグラウンドで続ける
+    ctx.waitUntil(handleEvents(events, env));
 
-        // Cloudflare Workers AI
-        const aiResponse = await env.AI.run(
-          "@cf/qwen/qwen3-30b-a3b-fp8",
-          {
-            messages: [
-              {
-                role: "system",
-                content: `
+    return new Response("OK");
+  },
+};
+
+async function handleEvents(events, env) {
+  for (const event of events) {
+    try {
+      if (event.type !== "message") continue;
+      if (event.message?.type !== "text") continue;
+
+      const userMessage = event.message.text;
+
+      const aiResponse = await env.AI.run(
+        "@cf/qwen/qwen3-30b-a3b-fp8",
+        {
+          messages: [
+            {
+              role: "system",
+              content: `
 あなたの名前は「ちゃぴ」。
-LINEグループにいる、明るく親しみやすい女の子として会話してください。
+LINEにいる、明るく親しみやすい女の子として普通に会話してください。
 
-【絶対に守ること】
+【会話のルール】
 ・自然な博多弁で話す
-・標準語で長々と説明しない
-・AIアシスタントっぽい堅い文章にしない
-・相手の発言に対して普通のLINE会話のように返す
-・質問されていないことまで勝手に解説しない
-・雑談なら短めに返す
-・同じ内容を何度も繰り返さない
-・「博多弁では〜と言います」のような方言解説をしない
-・知らないことは知ったかぶりせず「それは分からんばい」と言う
+・相手の発言にまず普通に反応する
+・雑談では解説を始めない
+・質問された時だけ必要な説明をする
 ・基本は1〜4文程度
-・絵文字は使いすぎず、自然に使う
+・LINEらしく短く自然に返す
+・相手に聞かれていないことを勝手に講義しない
 ・自分のことは「ちゃぴ」と呼ぶ
-・男性口調や「俺」は使わない
+・「俺」は絶対に使わない
+・意味不明な造語は使わない
+・過剰な敬語は使わない
+・絵文字は自然な範囲で少しだけ使う
 
-【博多弁の例】
+【博多弁】
 「そうだよ」→「そうばい」
 「そうなの？」→「そうと？」
 「何してるの？」→「何しよーと？」
 「いいよ」→「よかよ」
 「大丈夫だよ」→「大丈夫ばい」
-「知らない」→「知らんばい」
 「〜だから」→「〜やけん」
+「知らない」→「知らんばい」
 
-ただし、毎文「ばい」「たい」「と？」を付けるような不自然な博多弁にはしないでください。
+ただし毎文「ばい」「たい」を付ける不自然な方言にはしない。
 
-相手が相談してきた時はちゃんと話を聞いて、必要なら少し詳しく答えてください。
-相手が質問した時は、質問に直接答えてください。
-相手が雑談してきた時は、友達とのLINEのように自然に会話してください。
-`
-              },
-              {
-                role: "user",
-                content: userMessage
-              }
-            ],
-            max_tokens: 350,
-            temperature: 0.8
-          }
-        );
+例：
+ユーザー「今日何食べよう？」
+ちゃぴ「何食べよっか〜😋 ちゃぴなら今日はラーメン気分たい！かずたかは今、がっつり系とあっさり系どっち？」
 
-        // Workers AIはモデルによって返却形式が違うため両対応
-        const replyText =
-          aiResponse?.response ||
-          aiResponse?.choices?.[0]?.message?.content ||
-          "ごめん、今うまく返事できんかった💦";
+ユーザー「博多弁で話して」
+ちゃぴ「もちろんよかよ😂 これから博多弁でしゃべるけん！」
 
-        // LINEへ返信
-        const lineResponse = await fetch(
-          "https://api.line.me/v2/bot/message/reply",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
+ユーザー「眠い」
+ちゃぴ「それは眠たいやつやん😂 今日ちゃんと寝れそうと？」
+
+説明ではなく、まず会話をしてください。
+`,
             },
-            body: JSON.stringify({
-              replyToken: event.replyToken,
-              messages: [
-                {
-                  type: "text",
-                  text: replyText.slice(0, 5000)
-                }
-              ]
-            })
-          }
+            {
+              role: "user",
+              content: userMessage,
+            },
+          ],
+          max_tokens: 220,
+          temperature: 0.7,
+        }
+      );
+
+      const replyText =
+        aiResponse?.response?.trim() ||
+        aiResponse?.choices?.[0]?.message?.content?.trim() ||
+        "ごめん、今うまく返事できんかった💦";
+
+      const response = await fetch(
+        "https://api.line.me/v2/bot/message/reply",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+          },
+          body: JSON.stringify({
+            replyToken: event.replyToken,
+            messages: [
+              {
+                type: "text",
+                text: replyText.slice(0, 5000),
+              },
+            ],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        console.error(
+          "LINE reply failed:",
+          response.status,
+          await response.text()
         );
-
-        const lineResult = await lineResponse.text();
-
-        console.log("LINE status:", lineResponse.status);
-        console.log("LINE response:", lineResult);
       }
-
-      return new Response("OK");
     } catch (error) {
-      console.error("CHAPI ERROR:", error);
-
-      return new Response("ERROR", {
-        status: 500
-      });
+      console.error("CHAPI EVENT ERROR:", error);
     }
   }
-};
+}
