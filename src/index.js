@@ -1,90 +1,8 @@
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-
-    // Worker稼働確認
-    if (request.method === "GET" && !url.searchParams.get("check")) {
-      return new Response("ちゃぴAI is running!");
-    }
-
-    // AI単体テスト
-    if (request.method === "GET" && url.searchParams.get("check") === "ai") {
-      try {
-        const result = await env.AI.run(
-          "@cf/meta/llama-3.1-8b-instruct-fast",
-          {
-            messages: [
-              {
-                role: "system",
-                content:
-                  "あなたは日本語で自然に会話するAIです。変な言い回しや不自然な造語は使わず、簡潔で読みやすい日本語で返答してください。",
-              },
-              {
-                role: "user",
-                content: "こんにちは。自然な日本語で短く返事して。",
-              },
-            ],
-            temperature: 0.4,
-            max_tokens: 120,
-          }
-        );
-
-        return new Response(
-          "AI OK\n\n" + JSON.stringify(result, null, 2),
-          {
-            headers: {
-              "Content-Type": "text/plain; charset=UTF-8",
-            },
-          }
-        );
-      } catch (error) {
-        return new Response(
-          "AI ERROR\n\n" + String(error?.stack || error),
-          {
-            status: 500,
-            headers: {
-              "Content-Type": "text/plain; charset=UTF-8",
-            },
-          }
-        );
-      }
-    }
-
-    // LINEトークン単体テスト
-    if (request.method === "GET" && url.searchParams.get("check") === "line") {
-      try {
-        const response = await fetch("https://api.line.me/v2/bot/info", {
-          headers: {
-            Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
-          },
-        });
-
-        const result = await response.text();
-
-        return new Response(
-          `LINE STATUS: ${response.status}\n\n${result}`,
-          {
-            status: response.ok ? 200 : 500,
-            headers: {
-              "Content-Type": "text/plain; charset=UTF-8",
-            },
-          }
-        );
-      } catch (error) {
-        return new Response(
-          "LINE ERROR\n\n" + String(error?.stack || error),
-          {
-            status: 500,
-            headers: {
-              "Content-Type": "text/plain; charset=UTF-8",
-            },
-          }
-        );
-      }
-    }
-
+    // ブラウザで開いた時の確認用
     if (request.method !== "POST") {
-      return new Response("Method Not Allowed", { status: 405 });
+      return new Response("ちゃぴAI is running!");
     }
 
     try {
@@ -97,66 +15,98 @@ export default {
 
         const userMessage = event.message.text;
 
+        // Cloudflare Workers AI
         const aiResponse = await env.AI.run(
-          "@cf/meta/llama-3.1-8b-instruct-fast",
+          "@cf/qwen/qwen3-30b-a3b-fp8",
           {
             messages: [
               {
                 role: "system",
-                content:
-                  "あなたは『ちゃぴ』という親しみやすい女の子AIです。日本語で自然に会話してください。基本は標準語ですが、語尾や相づちに軽く自然な博多弁を混ぜてください。博多弁を無理に連発しないでください。『〜たい』『〜ばい』『〜と？』『〜けん』などを自然な範囲で使ってください。変な造語、意味不明な表現、不自然な敬語、過剰なテンションは禁止です。質問には最初に結論を答えて、そのあと必要な説明をしてください。分からないことは無理に作らず、分からないと伝えてください。LINEで読みやすいように、返答は基本3〜8行程度にしてください。",
+                content: `
+あなたの名前は「ちゃぴ」。
+LINEグループにいる、明るく親しみやすい女の子として会話してください。
+
+【絶対に守ること】
+・自然な博多弁で話す
+・標準語で長々と説明しない
+・AIアシスタントっぽい堅い文章にしない
+・相手の発言に対して普通のLINE会話のように返す
+・質問されていないことまで勝手に解説しない
+・雑談なら短めに返す
+・同じ内容を何度も繰り返さない
+・「博多弁では〜と言います」のような方言解説をしない
+・知らないことは知ったかぶりせず「それは分からんばい」と言う
+・基本は1〜4文程度
+・絵文字は使いすぎず、自然に使う
+・自分のことは「ちゃぴ」と呼ぶ
+・男性口調や「俺」は使わない
+
+【博多弁の例】
+「そうだよ」→「そうばい」
+「そうなの？」→「そうと？」
+「何してるの？」→「何しよーと？」
+「いいよ」→「よかよ」
+「大丈夫だよ」→「大丈夫ばい」
+「知らない」→「知らんばい」
+「〜だから」→「〜やけん」
+
+ただし、毎文「ばい」「たい」「と？」を付けるような不自然な博多弁にはしないでください。
+
+相手が相談してきた時はちゃんと話を聞いて、必要なら少し詳しく答えてください。
+相手が質問した時は、質問に直接答えてください。
+相手が雑談してきた時は、友達とのLINEのように自然に会話してください。
+`
               },
               {
                 role: "user",
-                content: userMessage,
-              },
+                content: userMessage
+              }
             ],
-            temperature: 0.4,
             max_tokens: 350,
-            repetition_penalty: 1.1,
+            temperature: 0.8
           }
         );
 
+        // Workers AIはモデルによって返却形式が違うため両対応
         const replyText =
-          aiResponse?.response?.trim() ||
-          "ごめんね、今ちょっと上手く答えられんかった🥺 もう一回聞いてみて！";
+          aiResponse?.response ||
+          aiResponse?.choices?.[0]?.message?.content ||
+          "ごめん、今うまく返事できんかった💦";
 
+        // LINEへ返信
         const lineResponse = await fetch(
           "https://api.line.me/v2/bot/message/reply",
           {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+              Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
             },
             body: JSON.stringify({
               replyToken: event.replyToken,
               messages: [
                 {
                   type: "text",
-                  text: replyText.slice(0, 5000),
-                },
-              ],
-            }),
+                  text: replyText.slice(0, 5000)
+                }
+              ]
+            })
           }
         );
 
-        if (!lineResponse.ok) {
-          const errorText = await lineResponse.text();
-          console.error(
-            "LINE reply error:",
-            lineResponse.status,
-            errorText
-          );
-        }
+        const lineResult = await lineResponse.text();
+
+        console.log("LINE status:", lineResponse.status);
+        console.log("LINE response:", lineResult);
       }
 
       return new Response("OK");
     } catch (error) {
       console.error("CHAPI ERROR:", error);
 
-      // LINE側には200を返して再送ループを防ぐ
-      return new Response("OK");
+      return new Response("ERROR", {
+        status: 500
+      });
     }
-  },
+  }
 };
