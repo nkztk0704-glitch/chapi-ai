@@ -3,67 +3,19 @@ export default {
     const url = new URL(request.url);
 
     // ============================================================
-    // AIテスト
+    // Tavily単体テスト
     // ============================================================
 
     if (
       request.method === "GET" &&
-      url.searchParams.get("check") === "ai"
+      url.searchParams.get("check") === "tavily"
     ) {
       try {
-        const raw = await runAI(
-          [
-            {
-              role: "system",
-              content:
-                "日本語の最終回答だけ返してください。思考過程は出力しないでください。",
-            },
-            {
-              role: "user",
-              content:
-                "「AIテスト成功」とだけ答えてください。",
-            },
-          ],
-          env,
-          600,
-          0.1
+        const result = await searchTavily(
+          "ダダサバイバー 今来てるイベント",
+          "week",
+          env
         );
-
-        return jsonResponse({
-          success: true,
-          extracted: extractAIText(raw),
-          rawResponse: raw,
-        });
-      } catch (error) {
-        return jsonResponse({
-          success: false,
-          error: String(
-            error?.stack ||
-            error?.message ||
-            error
-          ),
-        });
-      }
-    }
-
-    // ============================================================
-    // 検索テスト
-    // ============================================================
-
-    if (
-      request.method === "GET" &&
-      url.searchParams.get("check") === "search"
-    ) {
-      try {
-        const query =
-          url.searchParams.get("q") ||
-          "ダダサバイバー 今来てるイベント";
-
-        const result =
-          await searchWeb(
-            query,
-            env
-          );
 
         return jsonResponse({
           success: true,
@@ -72,11 +24,52 @@ export default {
       } catch (error) {
         return jsonResponse({
           success: false,
-          error: String(
-            error?.stack ||
-            error?.message ||
-            error
-          ),
+          error: String(error),
+        });
+      }
+    }
+
+    // ============================================================
+    // AI単体テスト
+    // ============================================================
+
+    if (
+      request.method === "GET" &&
+      url.searchParams.get("check") === "ai"
+    ) {
+      try {
+        const aiResponse = await env.AI.run(
+          "@cf/qwen/qwen3-30b-a3b-fp8",
+          {
+            messages: [
+              {
+                role: "system",
+                content:
+                  "日本語で短く答えてください。思考過程は出さず、最終回答だけ返してください。",
+              },
+              {
+                role: "user",
+                content:
+                  "「AIテスト成功」とだけ返してください。",
+              },
+            ],
+            max_tokens: 150,
+            temperature: 0,
+          }
+        );
+
+        return jsonResponse({
+          success: true,
+          model:
+            "@cf/qwen/qwen3-30b-a3b-fp8",
+          extracted:
+            extractAIText(aiResponse),
+          rawResponse: aiResponse,
+        });
+      } catch (error) {
+        return jsonResponse({
+          success: false,
+          error: String(error),
         });
       }
     }
@@ -94,14 +87,12 @@ export default {
     let body;
 
     try {
-      body =
-        await request.json();
+      body = await request.json();
     } catch {
       return new Response("OK");
     }
 
-    const events =
-      body.events || [];
+    const events = body.events || [];
 
     ctx.waitUntil(
       handleEvents(events, env)
@@ -113,7 +104,7 @@ export default {
 
 
 // ============================================================
-// LINEイベント
+// LINEイベント処理
 // ============================================================
 
 async function handleEvents(events, env) {
@@ -126,19 +117,14 @@ async function handleEvents(events, env) {
       }
 
       if (
-        event.message?.type !== "text"
+        event.message?.type !==
+        "text"
       ) {
         continue;
       }
 
       const userMessage =
-        String(
-          event.message.text || ""
-        ).trim();
-
-      if (!userMessage) {
-        continue;
-      }
+        event.message.text.trim();
 
       const conversationId =
         event.source?.groupId ||
@@ -152,31 +138,78 @@ async function handleEvents(events, env) {
       const memoryKey =
         `memory:${conversationId}`;
 
-      let history =
-        await readArrayKV(
-          env,
-          historyKey
+      // ============================================================
+      // 会話履歴
+      // ============================================================
+
+      let history = [];
+
+      try {
+        const saved =
+          await env.MEMORY.get(
+            historyKey
+          );
+
+        if (saved) {
+          const parsed =
+            JSON.parse(saved);
+
+          if (
+            Array.isArray(parsed)
+          ) {
+            history = parsed;
+          }
+        }
+      } catch (error) {
+        console.error(
+          "HISTORY READ ERROR:",
+          error
         );
+      }
 
-      let memories =
-        await readArrayKV(
-          env,
-          memoryKey
-        );
+      // ============================================================
+      // 長期記憶
+      // ============================================================
 
-      const migrated =
-        migrateAllMemories(
-          memories
-        );
+      let memories = [];
 
-      memories =
-        migrated.memories;
+      try {
+        const saved =
+          await env.MEMORY.get(
+            memoryKey
+          );
 
-      if (migrated.changed) {
-        await safeKVPut(
-          env,
-          memoryKey,
-          memories
+        if (saved) {
+          const parsed =
+            JSON.parse(saved);
+
+          if (
+            Array.isArray(parsed)
+          ) {
+            const migrated =
+              migrateAllMemories(
+                parsed
+              );
+
+            memories =
+              migrated.memories;
+
+            if (
+              migrated.changed
+            ) {
+              await env.MEMORY.put(
+                memoryKey,
+                JSON.stringify(
+                  memories
+                )
+              );
+            }
+          }
+        }
+      } catch (error) {
+        console.error(
+          "MEMORY READ ERROR:",
+          error
         );
       }
 
@@ -185,9 +218,15 @@ async function handleEvents(events, env) {
       // ============================================================
 
       if (
-        userMessage.includes("全部忘れて") ||
-        userMessage.includes("全部忘れろ") ||
-        userMessage.includes("記憶消して")
+        userMessage.includes(
+          "全部忘れて"
+        ) ||
+        userMessage.includes(
+          "記憶消して"
+        ) ||
+        userMessage.includes(
+          "全部忘れろ"
+        )
       ) {
         await env.MEMORY.delete(
           historyKey
@@ -207,22 +246,34 @@ async function handleEvents(events, env) {
       }
 
       // ============================================================
-      // 記憶保存
+      // 覚えて系
       // ============================================================
 
       const shouldRemember =
-        userMessage.includes("覚え") ||
-        userMessage.includes("記憶して") ||
-        userMessage.includes("忘れないで") ||
-        userMessage.includes("忘れんで");
+        userMessage.includes(
+          "覚え"
+        ) ||
+        userMessage.includes(
+          "記憶して"
+        ) ||
+        userMessage.includes(
+          "忘れないで"
+        ) ||
+        userMessage.includes(
+          "忘れんで"
+        );
+
+      let newlySaved = [];
 
       if (shouldRemember) {
-        const extracted =
+        newlySaved =
           extractMemories(
             userMessage
           );
 
-        for (const item of extracted) {
+        for (
+          const item of newlySaved
+        ) {
           memories =
             upsertMemory(
               memories,
@@ -230,32 +281,62 @@ async function handleEvents(events, env) {
             );
         }
 
-        if (extracted.length > 0) {
+        if (
+          newlySaved.length === 0
+        ) {
           memories =
-            memories.slice(-50);
+            upsertMemory(
+              memories,
+              {
+                type: "general",
+                key:
+                  "general_" +
+                  simpleHash(
+                    userMessage
+                  ),
+                value:
+                  userMessage,
+                text:
+                  userMessage,
+                savedAt:
+                  new Date()
+                    .toISOString(),
+              }
+            );
+        }
 
-          await safeKVPut(
-            env,
-            memoryKey,
+        memories =
+          memories.slice(-50);
+
+        await env.MEMORY.put(
+          memoryKey,
+          JSON.stringify(
             memories
+          )
+        );
+
+        const savedReply =
+          buildSavedReply(
+            newlySaved
           );
 
-          const reply =
-            buildSavedReply(
-              extracted
+        if (savedReply) {
+          const replyText =
+            cleanReply(
+              savedReply
             );
 
           await saveHistory(
-            env,
             historyKey,
             history,
             userMessage,
-            reply
+            replyText,
+            env
           );
 
           await replyToLine(
             event.replyToken,
-            reply,
+            replyText,
             env
           );
 
@@ -275,11 +356,11 @@ async function handleEvents(events, env) {
 
       if (profileReply) {
         await saveHistory(
-          env,
           historyKey,
           history,
           userMessage,
-          profileReply
+          profileReply,
+          env
         );
 
         await replyToLine(
@@ -303,11 +384,11 @@ async function handleEvents(events, env) {
 
       if (foodReply) {
         await saveHistory(
-          env,
           historyKey,
           history,
           userMessage,
-          foodReply
+          foodReply,
+          env
         );
 
         await replyToLine(
@@ -319,339 +400,412 @@ async function handleEvents(events, env) {
         continue;
       }
 
+      history =
+        history.slice(-16);
+
       // ============================================================
-      // 検索判定
+      // Web検索判定
       // ============================================================
 
       const searchDecision =
-        decideSearch(
+        decideWhetherToSearch(
           userMessage
         );
 
-      let searchData = null;
+      let searched = false;
+      let webContext = "";
+      let sourceUrls = [];
 
-      if (searchDecision.search) {
+      if (
+        searchDecision.search
+      ) {
         try {
-          searchData =
-            await searchWeb(
+          const searchResult =
+            await searchTavily(
               searchDecision.query,
+              searchDecision.freshness,
               env
             );
+
+          if (
+            searchResult.results
+              .length > 0
+          ) {
+            searched = true;
+
+            webContext =
+              searchResult.results
+                .map(
+                  (
+                    item,
+                    index
+                  ) => `
+【資料 ${index + 1}】
+
+タイトル:
+${item.title}
+
+内容:
+${item.content}
+`
+                )
+                .join("\n");
+
+            sourceUrls =
+              searchResult.results
+                .slice(0, 3)
+                .map(
+                  item =>
+                    item.url
+                )
+                .filter(Boolean);
+          }
         } catch (error) {
           console.error(
             "SEARCH ERROR:",
             error
           );
         }
-
-        if (
-          !searchData ||
-          !Array.isArray(
-            searchData.results
-          ) ||
-          searchData.results.length === 0
-        ) {
-          const reply =
-            "ごめん、検索結果がうまく取れんかった💦";
-
-          await saveHistory(
-            env,
-            historyKey,
-            history,
-            userMessage,
-            reply
-          );
-
-          await replyToLine(
-            event.replyToken,
-            reply,
-            env
-          );
-
-          continue;
-        }
       }
 
-      const japanNow =
-        getJapanDateTime();
-
-      let systemPrompt = "";
-      let aiHistory = [];
-
       // ============================================================
-      // Web検索回答
+      // 現在日時
+      //
+      // Cloudflare内部のUTC時刻から
+      // 日本時間を明示的に作る
       // ============================================================
 
-      if (searchDecision.search) {
-        const sourcesText =
-          searchData.results
-            .slice(0, 6)
-            .map(
-              (item, index) => `
-【検索資料 ${index + 1}】
-
-タイトル:
-${item.title}
-
-公開・更新日:
-${item.publishedDate || "不明"}
-
-コード側の開催期間判定:
-${item.temporalInfo || "開催期間を自動判定できる記載なし"}
-
-内容:
-${item.content}
-`
-            )
-            .join("\n");
-
-        systemPrompt = `
-あなたの名前は「ちゃぴ」。
-LINEで話す明るく親しみやすい博多の女の子です。
-
-現在の日本時間:
-${japanNow}
-
-今回の質問はWeb検索済みです。
-
-
-【最重要】
-
-検索資料だけを根拠に回答してください。
-
-モデル自身の古い知識、
-過去の会話、
-ユーザーの個人情報を
-検索回答に混ぜてはいけません。
-
-検索資料にない
-日付、報酬、性能、仕様を
-想像して追加してはいけません。
-
-
-【コード側の開催期間判定】
-
-各検索資料には、
-
-「コード側の開催期間判定」
-
-が付いている場合があります。
-
-この判定は、
-現在の日本時間と、
-資料に書かれた開催期間を
-プログラム側で比較した結果です。
-
-「開始前」
-と書いてあれば、
-絶対に「開催中」と言ってはいけません。
-
-「終了済み」
-と書いてあれば、
-絶対に「開催中」と言ってはいけません。
-
-「開催中」
-と書いてあるものだけを、
-現在開催中として扱ってください。
-
-
-【25:00表記】
-
-8月12日 25:00 は、
-8月13日 午前1:00です。
-
-24:59は、
-翌日の午前0:59です。
-
-コード側ではこの変換を済ませています。
-
-
-【最新情報】
-
-「今」
-「現在」
-「最新」
-「今来てる」
-「開催中」
-
-と聞かれた場合は、
-
-古いイベントを
-現在開催中として紹介しないでください。
-
-開始前イベントは
-「これから始まるイベント」
-
-終了済みは
-「終了済み」
-
-と分けてください。
-
-
-【情報が食い違う場合】
-
-資料同士で開催期間や数字が違う場合は、
-
-「情報によって表記が違っとる」
-
-と伝えてください。
-
-公式情報、
-より新しい情報、
-コード側の期間判定を優先してください。
-
-
-【ダダサバイバー】
-
-ダダサバイバーとSurvivor.ioは
-同じゲームとして扱って構いません。
-
-以下の質問では
-検索資料を比較してください。
-
-・イベント
-・イベント交換
-・S級軍備
-・装備
-・サバイバー
-・キャラ
-・コレクション
-・欠片
-・テックパーツ
-・ペット
-・覚醒
-・無課金攻略
-・ギフトコード
-・アップデート
-
-
-【攻略相談】
-
-「何が一番強い？」
-「どれがおすすめ？」
-「何を交換？」
-「無課金なら？」
-「何を育てる？」
-「どっちがいい？」
-
-などの場合は、
-最初に結論を答えてください。
-
-例:
-
-「無課金なら○○を優先するのがおすすめばい👌」
-
-そのあと理由を短く説明してください。
-
-資料だけでは判断不能なら、
-
-「今の検索資料だけでは断定できん」
-
-と答えてください。
-
-
-【話し方】
-
-・自分のことは「ちゃぴ」
-・「俺」「僕」は使わない
-・自然な博多弁
-・友達とのLINEのように話す
-・長すぎない
-・毎回無理に質問で終わらせない
-・絵文字は少しだけ
-
-
-【禁止する関西弁】
-
-やで
-やん
-せや
-ほんま
-なんでやねん
-ええで
-ええやろ
-なんや
-やったんや
-あるんや
-できるんや
-なるんや
-
-
-【URL】
-
-URLは本文に書かないでください。
-
-参考URLはプログラム側で付けます。
-
-
-【検索資料】
-
-${sourcesText}
-`;
+      const now =
+        new Date();
+
+      const jstNow =
+        new Date(
+          now.getTime() +
+          9 * 60 * 60 * 1000
+        );
+
+      const currentJst =
+        formatJstForPrompt(
+          jstNow
+        );
 
       // ============================================================
-      // 普通の会話
+      // 普通の会話だけ記憶・履歴を使用
       // ============================================================
 
-      } else {
+      let memoryContext =
+        "なし";
+
+      let historyForAI = [];
+
+      if (
+        !searchDecision.search
+      ) {
         const relevant =
           selectRelevantMemories(
             userMessage,
             memories
           );
 
-        const memoryText =
+        memoryContext =
           relevant.length > 0
             ? relevant
-                .map(memoryToText)
+                .map(
+                  item =>
+                    memoryToText(
+                      item
+                    )
+                )
                 .join("\n")
             : "なし";
 
-        systemPrompt = `
+        historyForAI =
+          history.slice(-10);
+      }
+
+      // ============================================================
+      // システムプロンプト
+      // ============================================================
+
+      const systemPrompt = `
 あなたの名前は「ちゃぴ」。
 
 LINEにいる、
 明るく親しみやすい博多の女の子です。
 
-友達とのLINEのように自然に話してください。
+友達とのLINEのように
+自然に会話してください。
 
-・自分のことは「ちゃぴ」
+
+【話し方】
+
+・自分のことは「ちゃぴ」と呼ぶ
 ・「俺」「僕」は使わない
 ・自然な博多弁
 ・雑談は短め
+・質問は結論から
 ・絵文字は少しだけ
-・知らないことを作らない
-・毎回無理に質問で終わらせない
-・関西弁は禁止
 
-今回使ってよい長期記憶:
 
-${memoryText}
+【使ってよい博多弁】
 
-記憶にないことを
-覚えているふりしてはいけません。
+「〜ばい」
+「〜たい」
+「〜と？」
+「〜けん」
+「よかよ」
+「〜しとる」
+「〜しよった」
 
-ユーザーが聞いていない記憶を
-突然話題に出してはいけません。
+
+【禁止する関西弁】
+
+「やで」
+「やん」
+「せや」
+「ほんま」
+「なんでやねん」
+「ええで」
+「ええやろ」
+「なんや」
+「みたいや」
+「やったんや」
+「あるんや」
+「できるんや」
+「なるんや」
+
+
+【現在の日本時間】
+
+${currentJst}
+
+
+【日時判定の最重要ルール】
+
+イベントについて
+「開催中」
+「今やっている」
+「始まっている」
+「終了した」
+「まだ始まっていない」
+と判断する場合は、
+必ず上の現在の日本時間と
+検索資料にある開催日時を比較してください。
+
+未来のイベントを
+「開催中」と言ってはいけません。
+
+開始日時を過ぎていて、
+終了日時を過ぎていない場合だけ
+「開催中」と言ってください。
+
+開始日時より前なら
+「まだ開始前」
+と答えてください。
+
+終了日時を過ぎている場合は
+「終了済み」
+と答えてください。
+
+
+【25:00などの時刻表記】
+
+ゲーム攻略サイトでは、
+
+「8月12日25:00」
+
+のような表記があります。
+
+この場合、
+
+8月12日の25:00
+=
+8月13日の午前1:00
+
+です。
+
+同様に、
+
+24:00 = 翌日の0:00
+25:00 = 翌日の1:00
+26:00 = 翌日の2:00
+
+として必ず計算してください。
+
+
+【同じイベントで日時情報が食い違う場合】
+
+同じイベントについて、
+
+「8月12日〜8月17日」
+
+という日付だけの資料と、
+
+「8月12日25:00〜8月17日24:59」
+
+という時刻まで書かれた資料がある場合、
+
+必ず
+「時刻まで書かれた情報」
+を優先してください。
+
+日付だけの情報を使って
+開催中かどうか判断してはいけません。
+
+より具体的な日時情報を
+優先してください。
+
+
+【現在開催中イベントを聞かれた場合】
+
+ユーザーが
+
+「今来てるイベント」
+「今やってるイベント」
+「現在のイベント」
+「開催中のイベント」
+
+などを聞いた場合、
+
+開始前のイベントを
+「現在開催中」の一覧に
+含めてはいけません。
+
+開始前のイベントは、
+
+「次に始まるイベント」
+
+として分けて説明してください。
+
+検索資料から
+現在開催中だと確認できる
+期間限定イベントがない場合は、
+
+「今の時点では開催中の期間限定イベントは確認できんかった」
+
+と答えてください。
+
+そのうえで、
+開始予定が確認できる場合だけ、
+
+「次は○月○日○時から○○が始まる予定」
+
+と説明してください。
+
+
+【Web検索済みの場合】
+
+今回Web検索済みなら、
+下にある「検索資料」だけを使って
+事実関係を回答してください。
+
+あなた自身の古い知識を
+追加してはいけません。
+
+過去の会話内容や
+ユーザーの名前・好み・記憶を
+検索回答に混ぜてはいけません。
+
+ユーザーが聞いていない個人情報を
+絶対に話題に出さないでください。
+
+検索資料に明記されていない内容は
+事実として答えてはいけません。
+
+特に、
+
+・発売日
+・価格
+・スペック
+・対応機能
+・ゲーム名
+・イベント名
+・イベント開催日時
+・報酬
+・アップデート内容
+・サービス内容
+・日付
+・数字
+
+は資料に書いてあるものだけ
+使ってください。
+
+検索資料同士で内容が
+食い違う場合は、
+
+より具体的な情報を優先し、
+それでも判断できない場合は
+
+「情報が食い違っとる」
+
+と伝えてください。
+
+検索結果がない場合は、
+
+「今うまく検索結果を確認できんかった」
+
+と伝えてください。
+
+
+【最新情報という質問】
+
+「最新情報」を聞かれた時は、
+
+昔の発表を
+最新ニュースのように
+説明しないでください。
+
+資料から
+最近の更新・現在の仕様・
+最近の発表として確認できる内容だけ
+答えてください。
+
+
+【URL】
+
+回答本文にURLを書かないでください。
+
+URLと参考欄は
+プログラム側で追加します。
+
+
+【Markdown禁止】
+
+「**」
+「#」
+Markdownリンク
+
+は禁止です。
+
+
+【今回使ってよい長期記憶】
+
+${memoryContext}
+
+
+【Web検索状態】
+
+${searched
+  ? "Web検索済み"
+  : "Web検索なし"}
+
+
+【検索資料】
+
+${webContext || "なし"}
 `;
-
-        aiHistory =
-          history.slice(-10);
-      }
 
       const messages = [
         {
           role: "system",
-          content:
-            systemPrompt,
+          content: systemPrompt,
         },
 
-        ...aiHistory,
+        ...historyForAI,
 
         {
           role: "user",
-          content:
-            userMessage,
+          content: userMessage,
         },
       ];
 
@@ -659,103 +813,32 @@ ${memoryText}
       // AI
       // ============================================================
 
-      let rawAI = null;
-
-      try {
-        rawAI =
-          await runAI(
+      const aiResponse =
+        await env.AI.run(
+          "@cf/qwen/qwen3-30b-a3b-fp8",
+          {
             messages,
-            env,
-            searchDecision.search
-              ? 1800
-              : 1100,
-            searchDecision.search
-              ? 0.1
-              : 0.45
-          );
-      } catch (error) {
-        console.error(
-          "AI RUN ERROR:",
-          error
+
+            max_tokens:
+              searched
+                ? 700
+                : 450,
+
+            temperature:
+              searched
+                ? 0
+                : 0.4,
+
+            repetition_penalty:
+              1.1,
+          }
         );
-      }
 
       let replyText =
         extractAIText(
-          rawAI
-        );
-
-      // ============================================================
-      // Qwen reasoning対策
-      // ============================================================
-
-      if (!replyText) {
-        try {
-          const retry =
-            await runAI(
-              [
-                {
-                  role: "system",
-                  content:
-                    "思考過程は出力せず、日本語の最終回答だけ返してください。",
-                },
-                {
-                  role: "user",
-                  content:
-                    searchDecision.search
-                      ? `
-現在の日本時間:
-${japanNow}
-
-質問:
-${userMessage}
-
-以下の検索資料だけを使って答えてください。
-
-コード側で「開始前」と判定されたイベントは開催中と言わないでください。
-
-${searchData.results
-  .slice(0, 5)
-  .map(
-    (item, index) => `
-資料${index + 1}
-
-タイトル:
-${item.title}
-
-開催期間判定:
-${item.temporalInfo || "なし"}
-
-内容:
-${item.content}
-`
-  )
-  .join("\n")}
-`
-                      : userMessage,
-                },
-              ],
-              env,
-              2000,
-              0.1
-            );
-
-          replyText =
-            extractAIText(
-              retry
-            );
-        } catch (error) {
-          console.error(
-            "AI RETRY ERROR:",
-            error
-          );
-        }
-      }
-
-      if (!replyText) {
-        replyText =
-          "ごめん、今うまく返事できんかった💦";
-      }
+          aiResponse
+        ) ||
+        "ごめん、今うまく返事できんかった💦";
 
       replyText =
         cleanReply(
@@ -770,40 +853,36 @@ ${item.content}
         replyText;
 
       if (
-        searchDecision.search &&
-        searchData?.results?.length
+        searched &&
+        sourceUrls.length > 0
       ) {
-        const urls =
+        const uniqueUrls =
           [
             ...new Set(
-              searchData.results
-                .slice(0, 3)
-                .map(
-                  item =>
-                    item.url
-                )
-                .filter(Boolean)
+              sourceUrls
             ),
           ];
 
-        if (urls.length > 0) {
-          lineReply +=
-            "\n\n🔎 参考\n" +
-            urls
-              .map(
-                (url, index) =>
-                  `${index + 1}. ${url}`
-              )
-              .join("\n");
-        }
+        lineReply +=
+          "\n\n🔎 参考\n" +
+          uniqueUrls
+            .map(
+              (url, i) =>
+                `${i + 1}. ${url}`
+            )
+            .join("\n");
       }
 
+      // ============================================================
+      // 履歴保存
+      // ============================================================
+
       await saveHistory(
-        env,
         historyKey,
         history,
         userMessage,
-        replyText
+        replyText,
+        env
       );
 
       await replyToLine(
@@ -814,7 +893,7 @@ ${item.content}
 
     } catch (error) {
       console.error(
-        "EVENT ERROR:",
+        "CHAPI EVENT ERROR:",
         error
       );
     }
@@ -826,107 +905,105 @@ ${item.content}
 // 検索判定
 // ============================================================
 
-function decideSearch(message) {
+function decideWhetherToSearch(
+  message
+) {
   const text =
-    String(
-      message || ""
-    ).trim();
+    message.trim();
 
-  const lower =
-    text.toLowerCase();
-
-  const memoryTerms = [
-    "俺の名前",
-    "私の名前",
-    "僕の名前",
-    "呼び方",
-    "好きな食べ物",
-    "覚えとる",
+  const memoryWords = [
     "覚えてる",
+    "覚えとる",
+    "覚えてて",
+    "好きな食べ物",
+    "名前",
+    "呼び方",
+    "俺のこと",
+    "私のこと",
   ];
 
   if (
-    memoryTerms.some(
-      term =>
-        text.includes(term)
+    memoryWords.some(
+      word =>
+        text.includes(word)
     )
   ) {
     return {
       search: false,
       query: "",
+      freshness: "none",
     };
   }
 
-  const survivorTerms = [
-    "ダダサバ",
-    "ダダサバイバー",
-    "survivor.io",
-    "s級軍備",
-    "s級装備",
-    "メモリーエディター",
-    "キティース",
-    "タローシア",
-    "ヴァルカン",
-    "コレクション",
-    "テックパーツ",
-  ];
-
-  if (
-    survivorTerms.some(
-      term =>
-        lower.includes(
-          term.toLowerCase()
-        )
-    )
-  ) {
-    return {
-      search: true,
-
-      query:
-        buildSearchQuery(
-          text,
-          true
-        ),
-    };
-  }
-
-  const webTerms = [
+  const searchWords = [
     "調べて",
     "検索して",
     "最新",
+    "ニュース",
     "現在",
     "今の",
-    "今日",
-    "ニュース",
+    "今来てる",
+    "今きてる",
+    "今やってる",
+    "開催中",
+    "今日の",
     "価格",
     "値段",
     "発売",
-    "イベント",
     "アップデート",
+    "イベント",
     "在庫",
+    "結果",
+    "順位",
     "営業時間",
     "天気",
-    "結果",
-    "開催中",
   ];
 
-  const needsSearch =
-    webTerms.some(
-      term =>
-        text.includes(term)
+  const shouldSearch =
+    searchWords.some(
+      word =>
+        text.includes(word)
     );
 
+  if (!shouldSearch) {
+    return {
+      search: false,
+      query: "",
+      freshness: "none",
+    };
+  }
+
+  let freshness =
+    "none";
+
+  if (
+    text.includes("今日") ||
+    text.includes("現在") ||
+    text.includes("今来てる") ||
+    text.includes("今きてる") ||
+    text.includes("今やってる") ||
+    text.includes("開催中")
+  ) {
+    freshness =
+      "week";
+  } else if (
+    text.includes("最新") ||
+    text.includes("最近") ||
+    text.includes("ニュース")
+  ) {
+    freshness =
+      "week";
+  }
+
   return {
-    search:
-      needsSearch,
+    search: true,
 
     query:
-      needsSearch
-        ? buildSearchQuery(
-            text,
-            false
-          )
-        : "",
+      buildSearchQuery(
+        text
+      ),
+
+    freshness,
   };
 }
 
@@ -935,69 +1012,43 @@ function decideSearch(message) {
 // 検索語
 // ============================================================
 
-function buildSearchQuery(
-  message,
-  isSurvivor
-) {
-  let text =
-    String(
-      message || ""
-    )
+function buildSearchQuery(text) {
+  let cleaned =
+    String(text)
       .replace(
-        /調べて教えて/g,
+        /調べて(教えて)?/g,
         ""
       )
       .replace(
-        /調べて/g,
+        /検索して(教えて)?/g,
         ""
-      )
-      .replace(
-        /検索して教えて/g,
-        ""
-      )
-      .replace(
-        /検索して/g,
-        ""
-      )
-      .replace(
-        /教えて/g,
-        ""
-      )
-      .replace(
-        /について/g,
-        " "
-      )
-      .replace(
-        /\s+/g,
-        " "
       )
       .trim();
 
-  if (isSurvivor) {
-    const now =
-      getJapanDateParts();
-
-    if (
-      !text
-        .toLowerCase()
-        .includes("survivor.io")
-    ) {
-      text +=
-        " Survivor.io";
-    }
-
-    if (
-      text.includes("今") ||
-      text.includes("最新") ||
-      text.includes("イベント") ||
-      text.includes("開催")
-    ) {
-      text +=
-        ` ${now.year}年${now.month}月`;
-    }
+  if (
+    cleaned.includes(
+      "ダダサバイバー"
+    ) &&
+    (
+      cleaned.includes(
+        "イベント"
+      ) ||
+      cleaned.includes(
+        "今来てる"
+      ) ||
+      cleaned.includes(
+        "今きてる"
+      )
+    )
+  ) {
+    return (
+      "ダダサバイバー " +
+      "2026年8月 " +
+      "イベント 最新 開催期間"
+    );
   }
 
-  return text.slice(
+  return cleaned.slice(
     0,
     300
   );
@@ -1005,26 +1056,30 @@ function buildSearchQuery(
 
 
 // ============================================================
-// Web検索
+// Tavily検索
 // ============================================================
 
-async function searchWeb(query, env) {
-  if (!env.TAVILY_API_KEY) {
+async function searchTavily(
+  query,
+  freshness,
+  env
+) {
+  if (
+    !env.TAVILY_API_KEY
+  ) {
     throw new Error(
       "TAVILY_API_KEY が設定されていません"
     );
   }
 
-  const survivor =
-    isSurvivorQuery(
-      query
-    );
-
-  const now =
-    getJapanDateParts();
-
   const cacheKey =
-    `search:v70:${simpleHash(query)}`;
+    `tavily:v13:${simpleHash(
+      `${query}:${freshness}`
+    )}`;
+
+  // ============================================================
+  // キャッシュ
+  // ============================================================
 
   try {
     const cached =
@@ -1034,238 +1089,212 @@ async function searchWeb(query, env) {
 
     if (cached) {
       const parsed =
-        JSON.parse(
-          cached
-        );
+        JSON.parse(cached);
 
       if (
+        parsed &&
         Array.isArray(
-          parsed?.results
-        ) &&
-        parsed.results.length > 0
+          parsed.results
+        )
       ) {
         return parsed;
       }
     }
   } catch (error) {
     console.error(
-      "SEARCH CACHE ERROR:",
+      "CACHE READ ERROR:",
       error
     );
   }
 
-  const queries = [
-    query,
-  ];
-
-  if (survivor) {
-    queries.push(
-      `ダダサバイバー ${now.year}年${now.month}月 イベント 最新`
-    );
-
-    queries.push(
-      `Survivor.io ${getEnglishMonth(now.month)} ${now.year} event`
-    );
-  }
-
-  const responses =
-    await Promise.all(
-      queries.map(
-        async q => {
-          try {
-            return await callTavily(
-              q,
-              env
-            );
-          } catch (error) {
-            console.error(
-              "TAVILY ERROR:",
-              q,
-              error
-            );
-
-            return {
-              results: [],
-            };
-          }
-        }
-      )
+  const preferredDomains =
+    detectPreferredDomains(
+      query
     );
 
   let rawResults = [];
 
-  for (const response of responses) {
-    if (
-      Array.isArray(
-        response?.results
-      )
-    ) {
-      rawResults =
-        mergeResults(
-          rawResults,
-          response.results
-        );
-    }
+  // ============================================================
+  // 優先サイト検索
+  // ============================================================
+
+  if (
+    preferredDomains.length > 0
+  ) {
+    rawResults =
+      await callTavily(
+        query,
+        freshness,
+        env,
+        preferredDomains
+      );
   }
 
-  let results =
+  // ============================================================
+  // 一般検索追加
+  // ============================================================
+
+  if (
+    rawResults.length < 5
+  ) {
+    const general =
+      await callTavily(
+        query,
+        freshness,
+        env,
+        []
+      );
+
+    rawResults =
+      mergeResults(
+        rawResults,
+        general
+      );
+  }
+
+  // ============================================================
+  // 期間指定で不足した場合
+  // ============================================================
+
+  if (
+    rawResults.length < 4 &&
+    freshness !== "none"
+  ) {
+    const retry =
+      await callTavily(
+        query,
+        "none",
+        env,
+        preferredDomains
+      );
+
+    rawResults =
+      mergeResults(
+        rawResults,
+        retry
+      );
+  }
+
+  // ============================================================
+  // 品質フィルター
+  // ============================================================
+
+  const results =
     rawResults
       .filter(
         item =>
-          item &&
-          item.title &&
-          item.url
-      )
-      .filter(
-        isSafeSearchResult
+          isSafeSearchResult(
+            item
+          )
       )
       .map(
-        item => {
-          const content =
+        item => ({
+          title:
+            String(
+              item.title || ""
+            ),
+
+          url:
+            String(
+              item.url || ""
+            ),
+
+          content:
             String(
               item.content || ""
             ).slice(
               0,
-              2400
-            );
+              2200
+            ),
 
-          return {
-            title:
-              String(
+          score:
+            typeof item.score ===
+            "number"
+              ? item.score
+              : 0,
+
+          trust:
+            trustScore(
+              item.url || "",
+              preferredDomains
+            ),
+
+          relevance:
+            keywordOverlap(
+              query,
+              `${
                 item.title || ""
-              ),
+              } ${
+                item.content || ""
+              }`
+            ),
+        })
+      )
+      .filter(
+        item =>
+          item.title &&
+          item.url &&
+          item.score >= 0.25 &&
+          item.relevance > 0
+      )
+      .sort(
+        (a, b) => {
+          const aTotal =
+            a.trust * 3 +
+            a.relevance * 2 +
+            a.score;
 
-            url:
-              String(
-                item.url || ""
-              ),
+          const bTotal =
+            b.trust * 3 +
+            b.relevance * 2 +
+            b.score;
 
-            content,
-
-            score:
-              typeof item.score ===
-                "number"
-                ? item.score
-                : 0,
-
-            publishedDate:
-              String(
-                item.published_date ||
-                item.publishedDate ||
-                ""
-              ),
-
-            temporalInfo:
-              buildTemporalInfo(
-                `${item.title || ""}\n${content}`
-              ),
-
-            rankScore:
-              calculateRankScore(
-                item,
-                query,
-                survivor,
-                now
-              ),
-          };
+          return (
+            bTotal -
+            aTotal
+          );
         }
+      )
+      .slice(0, 6)
+      .map(
+        item => ({
+          title:
+            item.title,
+
+          url:
+            item.url,
+
+          content:
+            item.content,
+
+          score:
+            item.score,
+        })
       );
-
-  results.sort(
-    (a, b) =>
-      b.rankScore -
-      a.rankScore
-  );
-
-  const selected = [];
-  const domainCounts =
-    new Map();
-
-  for (const item of results) {
-    const domain =
-      getDomain(
-        item.url
-      );
-
-    const count =
-      domainCounts.get(
-        domain
-      ) || 0;
-
-    if (count >= 2) {
-      continue;
-    }
-
-    selected.push(
-      item
-    );
-
-    domainCounts.set(
-      domain,
-      count + 1
-    );
-
-    if (
-      selected.length >= 8
-    ) {
-      break;
-    }
-  }
-
-  const finalResults =
-    selected.map(
-      item => ({
-        title:
-          item.title,
-
-        url:
-          item.url,
-
-        content:
-          item.content,
-
-        score:
-          item.score,
-
-        publishedDate:
-          item.publishedDate,
-
-        temporalInfo:
-          item.temporalInfo,
-      })
-    );
 
   const result = {
     query,
-
-    results:
-      finalResults,
-
+    results,
     searchedAt:
       new Date()
         .toISOString(),
   };
 
-  if (
-    finalResults.length > 0
-  ) {
-    try {
-      await env.MEMORY.put(
-        cacheKey,
-        JSON.stringify(
-          result
-        ),
-        {
-          expirationTtl:
-            300,
-        }
-      );
-    } catch (error) {
-      console.error(
-        "SEARCH CACHE WRITE ERROR:",
-        error
-      );
-    }
+  try {
+    await env.MEMORY.put(
+      cacheKey,
+      JSON.stringify(
+        result
+      ),
+      {
+        expirationTtl: 300,
+      }
+    );
+  } catch (error) {
+    console.error(
+      "CACHE WRITE ERROR:",
+      error
+    );
   }
 
   return result;
@@ -1273,10 +1302,64 @@ async function searchWeb(query, env) {
 
 
 // ============================================================
-// Tavily
+// Tavily API
 // ============================================================
 
-async function callTavily(query, env) {
+async function callTavily(
+  query,
+  freshness,
+  env,
+  includeDomains
+) {
+  const requestBody = {
+    query,
+
+    search_depth:
+      "advanced",
+
+    max_results:
+      10,
+
+    include_answer:
+      false,
+
+    include_raw_content:
+      false,
+
+    include_images:
+      false,
+
+    exclude_domains: [
+      "xvideos.com",
+      "xhamster.com",
+      "pornhub.com",
+      "xnxx.com",
+      "redtube.com",
+      "youporn.com",
+      "spankbang.com",
+      "onlyfans.com",
+    ],
+  };
+
+  if (
+    Array.isArray(
+      includeDomains
+    ) &&
+    includeDomains.length > 0
+  ) {
+    requestBody.include_domains =
+      includeDomains;
+  }
+
+  if (
+    freshness === "day" ||
+    freshness === "week" ||
+    freshness === "month"
+  ) {
+    requestBody.time_range =
+      freshness;
+  }
+
   const response =
     await fetch(
       "https://api.tavily.com/search",
@@ -1292,575 +1375,204 @@ async function callTavily(query, env) {
         },
 
         body:
-          JSON.stringify({
-            query,
-
-            search_depth:
-              "advanced",
-
-            chunks_per_source:
-              3,
-
-            max_results:
-              10,
-
-            topic:
-              "general",
-
-            include_answer:
-              false,
-
-            include_raw_content:
-              false,
-
-            include_images:
-              false,
-
-            exclude_domains: [
-              "xvideos.com",
-              "xhamster.com",
-              "pornhub.com",
-              "xnxx.com",
-              "redtube.com",
-              "youporn.com",
-              "spankbang.com",
-              "onlyfans.com",
-              "search.yahoo.co.jp",
-            ],
-          }),
+          JSON.stringify(
+            requestBody
+          ),
       }
     );
 
-  const body =
+  const text =
     await response.text();
 
   if (!response.ok) {
     throw new Error(
-      `Tavily ${response.status}: ${body.slice(
+      `Tavily ${response.status}: ${text.slice(
         0,
         500
       )}`
     );
   }
 
-  return JSON.parse(
-    body
-  );
+  const data =
+    JSON.parse(text);
+
+  return Array.isArray(
+    data?.results
+  )
+    ? data.results
+    : [];
 }
 
 
 // ============================================================
-// 開催期間をコード側で判定
+// 質問ごとの優先サイト
 // ============================================================
 
-function buildTemporalInfo(text) {
-  const ranges =
-    extractJapaneseDateRanges(
-      text
-    );
-
-  if (
-    ranges.length === 0
-  ) {
-    return "";
-  }
-
-  const nowMs =
-    Date.now();
-
-  const lines =
-    ranges
-      .slice(0, 4)
-      .map(
-        range => {
-          let status = "";
-
-          if (
-            nowMs <
-            range.startMs
-          ) {
-            status =
-              "開始前";
-
-          } else if (
-            nowMs >
-            range.endMs
-          ) {
-            status =
-              "終了済み";
-
-          } else {
-            status =
-              "開催中";
-          }
-
-          return (
-            `${status} | ` +
-            `開始: ${range.startLabel} | ` +
-            `終了: ${range.endLabel}`
-          );
-        }
-      );
-
-  return lines.join(
-    "\n"
-  );
-}
-
-
-// ============================================================
-// 日本語の日付範囲抽出
-// ============================================================
-
-function extractJapaneseDateRanges(text) {
-  const value =
-    String(
-      text || ""
-    );
-
-  const current =
-    getJapanDateParts();
-
-  const results = [];
-
-  // ============================================================
-  // 時刻あり
-  // 8月12日(水)25:00 ～ 8月17日(月)24:59
-  // ============================================================
-
-  const timeRegex =
-    /(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*(\d{1,2})[:：](\d{2})\s*[~〜～\-－―]\s*(?:(\d{1,2})月)?(\d{1,2})日(?:\([^)]*\))?\s*(\d{1,2})[:：](\d{2})/g;
-
-  for (
-    const match of value.matchAll(
-      timeRegex
-    )
-  ) {
-    const startMonth =
-      Number(
-        match[1]
-      );
-
-    const startDay =
-      Number(
-        match[2]
-      );
-
-    const startHour =
-      Number(
-        match[3]
-      );
-
-    const startMinute =
-      Number(
-        match[4]
-      );
-
-    const endMonth =
-      Number(
-        match[5] ||
-        startMonth
-      );
-
-    const endDay =
-      Number(
-        match[6]
-      );
-
-    const endHour =
-      Number(
-        match[7]
-      );
-
-    const endMinute =
-      Number(
-        match[8]
-      );
-
-    let startYear =
-      current.year;
-
-    let endYear =
-      current.year;
-
-    if (
-      endMonth <
-      startMonth
-    ) {
-      endYear++;
-    }
-
-    const startMs =
-      jstToUtcMs(
-        startYear,
-        startMonth,
-        startDay,
-        startHour,
-        startMinute
-      );
-
-    const endMs =
-      jstToUtcMs(
-        endYear,
-        endMonth,
-        endDay,
-        endHour,
-        endMinute
-      );
-
-    results.push({
-      startMs,
-      endMs,
-
-      startLabel:
-        formatJstTimestamp(
-          startMs
-        ),
-
-      endLabel:
-        formatJstTimestamp(
-          endMs
-        ),
-    });
-  }
-
-  // ============================================================
-  // 日付だけ
-  // 8月12日～8月17日
-  // ============================================================
-
-  const dateRegex =
-    /(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*[~〜～\-－―]\s*(?:(\d{1,2})月)?(\d{1,2})日(?:\([^)]*\))?/g;
-
-  for (
-    const match of value.matchAll(
-      dateRegex
-    )
-  ) {
-    const fullText =
-      match[0];
-
-    // 時刻ありは二重登録しない
-    if (
-      /[:：]\d{2}/.test(
-        fullText
-      )
-    ) {
-      continue;
-    }
-
-    const startMonth =
-      Number(
-        match[1]
-      );
-
-    const startDay =
-      Number(
-        match[2]
-      );
-
-    const endMonth =
-      Number(
-        match[3] ||
-        startMonth
-      );
-
-    const endDay =
-      Number(
-        match[4]
-      );
-
-    let startYear =
-      current.year;
-
-    let endYear =
-      current.year;
-
-    if (
-      endMonth <
-      startMonth
-    ) {
-      endYear++;
-    }
-
-    const startMs =
-      jstToUtcMs(
-        startYear,
-        startMonth,
-        startDay,
-        0,
-        0
-      );
-
-    const endMs =
-      jstToUtcMs(
-        endYear,
-        endMonth,
-        endDay,
-        23,
-        59
-      );
-
-    results.push({
-      startMs,
-      endMs,
-
-      startLabel:
-        formatJstTimestamp(
-          startMs
-        ),
-
-      endLabel:
-        formatJstTimestamp(
-          endMs
-        ),
-    });
-  }
-
-  // 重複除去
-  const map =
-    new Map();
-
-  for (const item of results) {
-    const key =
-      `${item.startMs}:${item.endMs}`;
-
-    if (!map.has(key)) {
-      map.set(
-        key,
-        item
-      );
-    }
-  }
-
-  return [
-    ...map.values(),
-  ];
-}
-
-
-// ============================================================
-// JST日時 → UTCミリ秒
-//
-// 25:00などもDate.UTCが自動で翌日にしてくれる
-// ============================================================
-
-function jstToUtcMs(
-  year,
-  month,
-  day,
-  hour,
-  minute
-) {
-  return Date.UTC(
-    year,
-    month - 1,
-    day,
-    hour - 9,
-    minute,
-    0
-  );
-}
-
-
-// ============================================================
-// JST日時表示
-// ============================================================
-
-function formatJstTimestamp(ms) {
-  return new Intl.DateTimeFormat(
-    "ja-JP",
-    {
-      timeZone:
-        "Asia/Tokyo",
-
-      year:
-        "numeric",
-
-      month:
-        "2-digit",
-
-      day:
-        "2-digit",
-
-      hour:
-        "2-digit",
-
-      minute:
-        "2-digit",
-
-      hourCycle:
-        "h23",
-    }
-  ).format(
-    new Date(ms)
-  );
-}
-
-
-// ============================================================
-// 検索順位
-// ============================================================
-
-function calculateRankScore(
-  item,
-  query,
-  survivor,
-  now
+function detectPreferredDomains(
+  query
 ) {
   const text =
-    `${item?.title || ""} ${item?.content || ""}`
+    String(query)
       .toLowerCase();
 
-  let score =
-    typeof item?.score ===
-      "number"
-      ? item.score * 4
-      : 0;
+  if (
+    text.includes(
+      "ダダサバイバー"
+    ) ||
+    text.includes(
+      "survivor.io"
+    )
+  ) {
+    return [
+      "game8.jp",
+      "senilog.com",
+      "play.google.com",
+      "apps.apple.com",
+      "facebook.com",
+      "instagram.com",
+      "youtube.com",
+    ];
+  }
 
+  if (
+    text.includes(
+      "nintendo"
+    ) ||
+    text.includes(
+      "switch"
+    ) ||
+    text.includes(
+      "任天堂"
+    )
+  ) {
+    return [
+      "nintendo.com",
+      "nintendo.co.jp",
+      "famitsu.com",
+      "gamewith.jp",
+      "game8.jp",
+    ];
+  }
+
+  if (
+    text.includes(
+      "playstation"
+    ) ||
+    text.includes(
+      "ps5"
+    ) ||
+    text.includes(
+      "sony"
+    )
+  ) {
+    return [
+      "playstation.com",
+      "sony.com",
+      "famitsu.com",
+      "gamewith.jp",
+      "game8.jp",
+    ];
+  }
+
+  if (
+    text.includes(
+      "iphone"
+    ) ||
+    text.includes(
+      "apple"
+    )
+  ) {
+    return [
+      "apple.com",
+      "support.apple.com",
+    ];
+  }
+
+  if (
+    text.includes(
+      "microsoft"
+    ) ||
+    text.includes(
+      "windows"
+    ) ||
+    text.includes(
+      "xbox"
+    )
+  ) {
+    return [
+      "microsoft.com",
+      "support.microsoft.com",
+      "xbox.com",
+    ];
+  }
+
+  return [];
+}
+
+
+// ============================================================
+// 信頼度
+// ============================================================
+
+function trustScore(
+  url,
+  preferredDomains
+) {
   const domain =
-    getDomain(
-      item?.url || ""
-    );
-
-  const highestTrust = [
-    "play.google.com",
-    "habby.com",
-    "survivor.io",
-    "nintendo.com",
-    "nintendo.co.jp",
-  ];
-
-  const highTrust = [
-    "game8.jp",
-    "gamewith.jp",
-    "famitsu.com",
-    "4gamer.net",
-  ];
-
-  if (
-    highestTrust.some(
-      trusted =>
-        domain === trusted ||
-        domain.endsWith(
-          `.${trusted}`
-        )
-    )
-  ) {
-    score += 6;
-  }
-
-  if (
-    highTrust.some(
-      trusted =>
-        domain === trusted ||
-        domain.endsWith(
-          `.${trusted}`
-        )
-    )
-  ) {
-    score += 4;
-  }
-
-  if (survivor) {
-    if (
-      text.includes(
-        "ダダサバ"
-      )
-    ) {
-      score += 5;
-    }
-
-    if (
-      text.includes(
-        "survivor.io"
-      )
-    ) {
-      score += 5;
-    }
-
-    if (
-      query.includes("イベント") &&
-      (
-        text.includes("イベント") ||
-        text.includes("event")
-      )
-    ) {
-      score += 3;
-    }
-
-    if (
-      text.includes(
-        `${now.year}年${now.month}月`
-      )
-    ) {
-      score += 6;
-    }
-
-    if (
-      text.includes(
-        String(
-          now.year
-        )
-      )
-    ) {
-      score += 3;
-    }
-  }
+    getDomain(url);
 
   for (
-    let year = 2022;
-    year < now.year;
-    year++
+    const preferred of
+      preferredDomains
   ) {
     if (
-      text.includes(
-        String(
-          year
-        )
+      domain === preferred ||
+      domain.endsWith(
+        `.${preferred}`
       )
     ) {
-      score -=
-        (
-          now.year -
-          year
-        ) * 1.5;
+      return 3;
     }
   }
 
-  return score;
-}
+  const generalTrusted = [
+    "nintendo.com",
+    "nintendo.co.jp",
+    "apple.com",
+    "apps.apple.com",
+    "play.google.com",
+    "microsoft.com",
+    "sony.com",
+    "playstation.com",
+    "famitsu.com",
+    "gamewith.jp",
+    "game8.jp",
+    "senilog.com",
+  ];
 
-
-// ============================================================
-// ダダサ判定
-// ============================================================
-
-function isSurvivorQuery(text) {
-  const value =
-    String(
-      text || ""
-    ).toLowerCase();
-
-  return (
-    value.includes(
-      "ダダサバ"
-    ) ||
-    value.includes(
-      "survivor.io"
-    ) ||
-    value.includes(
-      "survivor io"
+  if (
+    generalTrusted.some(
+      trusted =>
+        domain === trusted ||
+        domain.endsWith(
+          `.${trusted}`
+        )
     )
-  );
+  ) {
+    return 2;
+  }
+
+  return 0;
 }
 
 
 // ============================================================
-// 安全フィルター
+// 安全判定
 // ============================================================
 
-function isSafeSearchResult(item) {
+function isSafeSearchResult(
+  item
+) {
   const url =
     String(
       item?.url || ""
@@ -1875,15 +1587,84 @@ function isSafeSearchResult(item) {
     "youporn.",
     "spankbang.",
     "onlyfans.",
-    "search.yahoo.co.jp",
   ];
 
   return !blocked.some(
     domain =>
-      url.includes(
-        domain
-      )
+      url.includes(domain)
   );
+}
+
+
+// ============================================================
+// 関連度
+// ============================================================
+
+function keywordOverlap(
+  query,
+  target
+) {
+  const words =
+    extractKeywords(
+      query
+    );
+
+  if (
+    words.length === 0
+  ) {
+    return 1;
+  }
+
+  const normalized =
+    String(target)
+      .toLowerCase();
+
+  let matched = 0;
+
+  for (
+    const word of words
+  ) {
+    if (
+      normalized.includes(
+        word.toLowerCase()
+      )
+    ) {
+      matched++;
+    }
+  }
+
+  return (
+    matched /
+    words.length
+  );
+}
+
+
+function extractKeywords(
+  text
+) {
+  const cleaned =
+    String(text)
+      .replace(
+        /[？?！!。、,.]/g,
+        " "
+      )
+      .replace(
+        /(最新情報|最新|最近|調べて|検索して|教えて|について|とは|ニュース|現在|今日)/g,
+        " "
+      );
+
+  return cleaned
+    .split(/\s+/)
+    .map(
+      word =>
+        word.trim()
+    )
+    .filter(
+      word =>
+        word.length >= 2
+    )
+    .slice(0, 10);
 }
 
 
@@ -1891,17 +1672,22 @@ function isSafeSearchResult(item) {
 // 検索結果結合
 // ============================================================
 
-function mergeResults(first, second) {
+function mergeResults(
+  a,
+  b
+) {
   const map =
     new Map();
 
   for (
     const item of [
-      ...(first || []),
-      ...(second || []),
+      ...a,
+      ...b,
     ]
   ) {
-    if (!item?.url) {
+    if (
+      !item?.url
+    ) {
       continue;
     }
 
@@ -1924,89 +1710,50 @@ function mergeResults(first, second) {
 
 
 // ============================================================
-// AI
+// JST表示
 // ============================================================
 
-async function runAI(
-  messages,
-  env,
-  maxTokens = 1000,
-  temperature = 0.4
+function formatJstForPrompt(
+  jstDate
 ) {
-  return await env.AI.run(
-    "@cf/qwen/qwen3-30b-a3b-fp8",
-    {
-      messages,
+  const year =
+    jstDate.getUTCFullYear();
 
-      max_tokens:
-        maxTokens,
+  const month =
+    String(
+      jstDate.getUTCMonth() +
+      1
+    ).padStart(2, "0");
 
-      temperature,
+  const day =
+    String(
+      jstDate.getUTCDate()
+    ).padStart(2, "0");
 
-      repetition_penalty:
-        1.08,
-    }
+  const hour =
+    String(
+      jstDate.getUTCHours()
+    ).padStart(2, "0");
+
+  const minute =
+    String(
+      jstDate.getUTCMinutes()
+    ).padStart(2, "0");
+
+  return (
+    `${year}年${month}月${day}日 ` +
+    `${hour}:${minute} JST`
   );
 }
 
 
 // ============================================================
-// AI返答取得
+// 記憶処理
 // ============================================================
 
-function extractAIText(response) {
-  if (!response) {
-    return "";
-  }
-
-  const content =
-    response
-      ?.choices
-      ?.[0]
-      ?.message
-      ?.content;
-
-  if (
-    typeof content === "string" &&
-    content.trim()
-  ) {
-    return content.trim();
-  }
-
-  if (
-    typeof response?.response ===
-      "string" &&
-    response.response.trim()
-  ) {
-    return response.response.trim();
-  }
-
-  if (
-    typeof response
-      ?.result
-      ?.response === "string" &&
-    response
-      .result
-      .response
-      .trim()
-  ) {
-    return (
-      response
-        .result
-        .response
-        .trim()
-    );
-  }
-
-  return "";
-}
-
-
-// ============================================================
-// 記憶抽出
-// ============================================================
-
-function extractMemories(text) {
+function extractMemories(
+  text
+) {
   const result = [];
 
   const now =
@@ -2015,81 +1762,59 @@ function extractMemories(text) {
 
   const name =
     text.match(
-      /(?:俺|私|僕)の名前は[「『]?([^、。！!？?\s]+?)[」』]?(?:って|と)?覚え/
+      /(?:俺|私|僕)の名前は([^、。！!？?\s]+?)(?:って|と)?覚え/
     );
 
-  if (name?.[1]) {
+  if (
+    name?.[1]
+  ) {
     result.push({
-      type:
-        "profile",
-
-      key:
-        "name",
-
+      type: "profile",
+      key: "name",
       value:
         cleanMemoryValue(
           name[1]
         ),
-
-      savedAt:
-        now,
+      savedAt: now,
     });
   }
 
-  const nicknamePatterns = [
-    /呼び方は[「『]?([^、。！!？?\s]+?)[」』]?(?:でいい|でよい|にして|って)/,
-    /[「『]?([^、。！!？?\s]+?)[」』]?(?:って|と)呼んで/,
-  ];
+  const nickname =
+    text.match(
+      /呼び方は([^、。！!？?\s]+?)(?:でいい|でよい|にして|って)/
+    );
 
-  for (
-    const pattern of nicknamePatterns
+  if (
+    nickname?.[1]
   ) {
-    const match =
-      text.match(
-        pattern
-      );
-
-    if (match?.[1]) {
-      result.push({
-        type:
-          "profile",
-
-        key:
-          "nickname",
-
-        value:
-          cleanMemoryValue(
-            match[1]
-          ),
-
-        savedAt:
-          now,
-      });
-
-      break;
-    }
+    result.push({
+      type: "profile",
+      key: "nickname",
+      value:
+        cleanMemoryValue(
+          nickname[1]
+        ),
+      savedAt: now,
+    });
   }
 
   const food =
     text.match(
-      /好きな食べ物(?:は|が)[「『]?([^、。！!？?\n]+?)[」』]?(?:って|と)?覚え/
+      /好きな食べ物(?:は|が)([^、。！!？?\n]+?)(?:って|と)?覚え/
     );
 
-  if (food?.[1]) {
+  if (
+    food?.[1]
+  ) {
     result.push({
-      type:
-        "preference",
-
+      type: "preference",
       key:
         "favorite_food",
-
       value:
         cleanFoodValue(
           food[1]
         ),
-
-      savedAt:
-        now,
+      savedAt: now,
     });
   }
 
@@ -2097,19 +1822,21 @@ function extractMemories(text) {
 }
 
 
-// ============================================================
-// 古い記憶移行
-// ============================================================
-
-function migrateAllMemories(raw) {
+function migrateAllMemories(
+  raw
+) {
   let result = [];
   let changed = false;
 
-  for (const item of raw) {
+  for (
+    const item of raw
+  ) {
     if (
       item?.key === "name" ||
-      item?.key === "nickname" ||
-      item?.key === "favorite_food"
+      item?.key ===
+        "nickname" ||
+      item?.key ===
+        "favorite_food"
     ) {
       result =
         upsertMemory(
@@ -2128,39 +1855,6 @@ function migrateAllMemories(raw) {
         ""
       );
 
-    const foodMatch =
-      text.match(
-        /好きな食べ物(?:は|が)?[「『]?([^、。！!？?\n]+?)[」』]?(?:って|と)?(?:覚え|記憶|$)/
-      );
-
-    if (foodMatch?.[1]) {
-      result =
-        upsertMemory(
-          result,
-          {
-            type:
-              "preference",
-
-            key:
-              "favorite_food",
-
-            value:
-              cleanFoodValue(
-                foodMatch[1]
-              ),
-
-            savedAt:
-              item?.savedAt ||
-              new Date()
-                .toISOString(),
-          }
-        );
-
-      changed = true;
-
-      continue;
-    }
-
     const extracted =
       extractMemories(
         text
@@ -2170,14 +1864,14 @@ function migrateAllMemories(raw) {
       extracted.length > 0
     ) {
       for (
-        const converted of extracted
+        const converted of
+          extracted
       ) {
         result =
           upsertMemory(
             result,
             {
               ...converted,
-
               savedAt:
                 item?.savedAt ||
                 converted.savedAt,
@@ -2186,6 +1880,23 @@ function migrateAllMemories(raw) {
       }
 
       changed = true;
+    } else {
+      result.push({
+        type: "general",
+
+        key:
+          item?.key ||
+          "general_" +
+          simpleHash(text),
+
+        value: text,
+
+        text,
+
+        savedAt:
+          item?.savedAt ||
+          "",
+      });
     }
   }
 
@@ -2198,18 +1909,12 @@ function migrateAllMemories(raw) {
 }
 
 
-// ============================================================
-// 記憶更新
-// ============================================================
-
 function upsertMemory(
   memories,
   item
 ) {
   const copy =
-    [
-      ...memories,
-    ];
+    [...memories];
 
   const index =
     copy.findIndex(
@@ -2223,7 +1928,6 @@ function upsertMemory(
   ) {
     copy[index] =
       item;
-
   } else {
     copy.push(
       item
@@ -2234,16 +1938,13 @@ function upsertMemory(
 }
 
 
-// ============================================================
-// 記憶保存返答
-// ============================================================
-
-function buildSavedReply(items) {
+function buildSavedReply(
+  items
+) {
   const name =
     items.find(
       item =>
-        item.key ===
-        "name"
+        item.key === "name"
     )?.value;
 
   const nickname =
@@ -2288,15 +1989,9 @@ function buildSavedReply(items) {
     );
   }
 
-  return (
-    "覚えたよ👌"
-  );
+  return "";
 }
 
-
-// ============================================================
-// 名前・呼び方
-// ============================================================
 
 function buildExactProfileReply(
   message,
@@ -2333,14 +2028,17 @@ function buildExactProfileReply(
 
   if (
     asksName &&
-    asksNickname &&
-    name &&
-    nickname
+    asksNickname
   ) {
-    return (
-      `名前は「${name}」で、` +
-      `ちゃぴは「${nickname}」って呼ぶよ😊`
-    );
+    if (
+      name &&
+      nickname
+    ) {
+      return (
+        `名前は「${name}」で、` +
+        `ちゃぴは「${nickname}」って呼ぶよ😊`
+      );
+    }
   }
 
   if (
@@ -2364,10 +2062,6 @@ function buildExactProfileReply(
   return "";
 }
 
-
-// ============================================================
-// 好きな食べ物
-// ============================================================
 
 function buildExactFoodReply(
   message,
@@ -2400,10 +2094,6 @@ function buildExactFoodReply(
 }
 
 
-// ============================================================
-// 記憶取得
-// ============================================================
-
 function getMemory(
   memories,
   key
@@ -2426,15 +2116,10 @@ function getMemory(
       )[0];
 
   return (
-    item?.value ||
-    ""
+    item?.value || ""
   );
 }
 
-
-// ============================================================
-// 関連記憶
-// ============================================================
 
 function selectRelevantMemories(
   message,
@@ -2451,13 +2136,17 @@ function selectRelevantMemories(
     return memories.filter(
       item =>
         item.key === "name" ||
-        item.key === "nickname"
+        item.key ===
+          "nickname"
     );
   }
 
   if (
     message.includes(
       "食べ物"
+    ) ||
+    message.includes(
+      "カレー"
     )
   ) {
     return memories.filter(
@@ -2471,7 +2160,9 @@ function selectRelevantMemories(
 }
 
 
-function memoryToText(item) {
+function memoryToText(
+  item
+) {
   if (
     item.key === "name"
   ) {
@@ -2481,7 +2172,8 @@ function memoryToText(item) {
   }
 
   if (
-    item.key === "nickname"
+    item.key ===
+    "nickname"
   ) {
     return (
       `呼び方: ${item.value}`
@@ -2497,15 +2189,17 @@ function memoryToText(item) {
     );
   }
 
-  return "";
+  return (
+    item.text ||
+    item.value ||
+    ""
+  );
 }
 
 
-// ============================================================
-// 記憶文字整形
-// ============================================================
-
-function cleanMemoryValue(value) {
+function cleanMemoryValue(
+  value
+) {
   return String(
     value || ""
   )
@@ -2525,7 +2219,9 @@ function cleanMemoryValue(value) {
 }
 
 
-function cleanFoodValue(value) {
+function cleanFoodValue(
+  value
+) {
   return String(
     value || ""
   )
@@ -2537,30 +2233,20 @@ function cleanFoodValue(value) {
       /覚えて.*$/g,
       ""
     )
-    .replace(
-      /記憶して.*$/g,
-      ""
-    )
-    .replace(
-      /[。！!？?]+$/g,
-      ""
-    )
     .trim();
 }
 
 
 // ============================================================
-// 返答整形
+// 回答整形
 // ============================================================
 
-function cleanReply(text) {
+function cleanReply(
+  text
+) {
   return String(
     text || ""
   )
-    .replace(
-      /<think>[\s\S]*?<\/think>/gi,
-      ""
-    )
     .replace(
       /\*\*/g,
       ""
@@ -2605,299 +2291,115 @@ function cleanReply(text) {
       /ほんま/g,
       "ほんと"
     )
-    .replace(
-      /\n{3,}/g,
-      "\n\n"
-    )
     .trim();
 }
 
 
 // ============================================================
-// KV
-// ============================================================
-
-async function readArrayKV(
-  env,
-  key
-) {
-  try {
-    const saved =
-      await env.MEMORY.get(
-        key
-      );
-
-    if (!saved) {
-      return [];
-    }
-
-    const parsed =
-      JSON.parse(
-        saved
-      );
-
-    return Array.isArray(
-      parsed
-    )
-      ? parsed
-      : [];
-
-  } catch (error) {
-    console.error(
-      "KV READ ERROR:",
-      error
-    );
-
-    return [];
-  }
-}
-
-
-async function safeKVPut(
-  env,
-  key,
-  value
-) {
-  try {
-    await env.MEMORY.put(
-      key,
-      JSON.stringify(
-        value
-      )
-    );
-  } catch (error) {
-    console.error(
-      "KV WRITE ERROR:",
-      error
-    );
-  }
-}
-
-
-// ============================================================
-// 履歴
+// 履歴保存
 // ============================================================
 
 async function saveHistory(
-  env,
-  key,
+  historyKey,
   history,
   userMessage,
-  replyText
+  replyText,
+  env
 ) {
   const updated = [
     ...history,
 
     {
-      role:
-        "user",
-
+      role: "user",
       content:
         userMessage,
     },
 
     {
-      role:
-        "assistant",
-
+      role: "assistant",
       content:
         replyText,
     },
 
   ].slice(-16);
 
-  await safeKVPut(
-    env,
-    key,
-    updated
+  await env.MEMORY.put(
+    historyKey,
+    JSON.stringify(
+      updated
+    )
   );
 }
 
 
 // ============================================================
-// LINE
+// AI回答抽出
 // ============================================================
 
-async function replyToLine(
-  replyToken,
-  text,
-  env
+function extractAIText(
+  aiResponse
 ) {
-  if (!replyToken) {
-    return;
+  if (
+    !aiResponse
+  ) {
+    return "";
   }
 
-  const response =
-    await fetch(
-      "https://api.line.me/v2/bot/message/reply",
-      {
-        method:
-          "POST",
+  const choice =
+    aiResponse
+      ?.choices
+      ?.[0]
+      ?.message
+      ?.content;
 
-        headers: {
-          "Content-Type":
-            "application/json",
+  if (
+    typeof choice ===
+      "string" &&
+    choice.trim()
+  ) {
+    return choice.trim();
+  }
 
-          Authorization:
-            `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
-        },
-
-        body:
-          JSON.stringify({
-            replyToken,
-
-            messages: [
-              {
-                type:
-                  "text",
-
-                text:
-                  String(
-                    text || ""
-                  ).slice(
-                    0,
-                    5000
-                  ),
-              },
-            ],
-          }),
-      }
-    );
-
-  if (!response.ok) {
-    console.error(
-      "LINE ERROR:",
-      response.status,
-      await response.text()
+  if (
+    typeof aiResponse
+      ?.response ===
+      "string" &&
+    aiResponse.response.trim()
+  ) {
+    return (
+      aiResponse.response.trim()
     );
   }
-}
 
-
-// ============================================================
-// 日本時間
-// ============================================================
-
-function getJapanDateParts() {
-  const formatter =
-    new Intl.DateTimeFormat(
-      "ja-JP",
-      {
-        timeZone:
-          "Asia/Tokyo",
-
-        year:
-          "numeric",
-
-        month:
-          "numeric",
-
-        day:
-          "numeric",
-      }
+  if (
+    typeof aiResponse
+      ?.result
+      ?.response ===
+      "string"
+  ) {
+    return (
+      aiResponse
+        .result
+        .response
+        .trim()
     );
+  }
 
-  const parts =
-    formatter.formatToParts(
-      new Date()
-    );
-
-  const get =
-    type =>
-      Number(
-        parts.find(
-          item =>
-            item.type ===
-            type
-        )?.value ||
-        0
-      );
-
-  return {
-    year:
-      get("year"),
-
-    month:
-      get("month"),
-
-    day:
-      get("day"),
-  };
-}
-
-
-function getJapanDateTime() {
-  return new Intl.DateTimeFormat(
-    "ja-JP",
-    {
-      timeZone:
-        "Asia/Tokyo",
-
-      year:
-        "numeric",
-
-      month:
-        "2-digit",
-
-      day:
-        "2-digit",
-
-      weekday:
-        "short",
-
-      hour:
-        "2-digit",
-
-      minute:
-        "2-digit",
-
-      hourCycle:
-        "h23",
-    }
-  ).format(
-    new Date()
-  );
-}
-
-
-function getEnglishMonth(month) {
-  const months = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-
-  return (
-    months[
-      Math.max(
-        0,
-        Math.min(
-          11,
-          month - 1
-        )
-      )
-    ] ||
-    ""
-  );
+  return "";
 }
 
 
 // ============================================================
-// その他
+// 共通
 // ============================================================
 
-function getDomain(url) {
+function getDomain(
+  url
+) {
   try {
-    return new URL(url)
+    return new URL(
+      url
+    )
       .hostname
       .toLowerCase();
   } catch {
@@ -2906,24 +2408,19 @@ function getDomain(url) {
 }
 
 
-function simpleHash(text) {
-  const value =
-    String(
-      text || ""
-    );
-
+function simpleHash(
+  text
+) {
   let hash =
     2166136261;
 
   for (
     let i = 0;
-    i < value.length;
+    i < text.length;
     i++
   ) {
     hash ^=
-      value.charCodeAt(
-        i
-      );
+      text.charCodeAt(i);
 
     hash +=
       (hash << 1) +
@@ -2939,7 +2436,59 @@ function simpleHash(text) {
 }
 
 
-function jsonResponse(data) {
+async function replyToLine(
+  replyToken,
+  text,
+  env
+) {
+  const response =
+    await fetch(
+      "https://api.line.me/v2/bot/message/reply",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+        },
+
+        body:
+          JSON.stringify({
+            replyToken,
+
+            messages: [
+              {
+                type: "text",
+
+                text:
+                  text.slice(
+                    0,
+                    5000
+                  ),
+              },
+            ],
+          }),
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    console.error(
+      "LINE REPLY ERROR:",
+      response.status,
+      await response.text()
+    );
+  }
+}
+
+
+function jsonResponse(
+  data
+) {
   return new Response(
     JSON.stringify(
       data,
