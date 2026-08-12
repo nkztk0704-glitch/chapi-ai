@@ -3,8 +3,7 @@ export default {
     const url = new URL(request.url);
 
     // ============================================================
-    // AI診断
-    // ?check=ai
+    // AIテスト
     // ============================================================
 
     if (
@@ -48,8 +47,7 @@ export default {
     }
 
     // ============================================================
-    // Web検索診断
-    // ?check=search&q=ダダサバイバー 今来てるイベント
+    // 検索テスト
     // ============================================================
 
     if (
@@ -115,7 +113,7 @@ export default {
 
 
 // ============================================================
-// LINEイベント処理
+// LINEイベント
 // ============================================================
 
 async function handleEvents(events, env) {
@@ -154,19 +152,11 @@ async function handleEvents(events, env) {
       const memoryKey =
         `memory:${conversationId}`;
 
-      // ==========================================================
-      // 会話履歴
-      // ==========================================================
-
       let history =
         await readArrayKV(
           env,
           historyKey
         );
-
-      // ==========================================================
-      // 長期記憶
-      // ==========================================================
 
       let memories =
         await readArrayKV(
@@ -190,9 +180,9 @@ async function handleEvents(events, env) {
         );
       }
 
-      // ==========================================================
+      // ============================================================
       // 全記憶削除
-      // ==========================================================
+      // ============================================================
 
       if (
         userMessage.includes("全部忘れて") ||
@@ -216,9 +206,9 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ==========================================================
+      // ============================================================
       // 記憶保存
-      // ==========================================================
+      // ============================================================
 
       const shouldRemember =
         userMessage.includes("覚え") ||
@@ -232,9 +222,7 @@ async function handleEvents(events, env) {
             userMessage
           );
 
-        for (
-          const item of extracted
-        ) {
+        for (const item of extracted) {
           memories =
             upsertMemory(
               memories,
@@ -275,9 +263,9 @@ async function handleEvents(events, env) {
         }
       }
 
-      // ==========================================================
+      // ============================================================
       // 名前・呼び方
-      // ==========================================================
+      // ============================================================
 
       const profileReply =
         buildExactProfileReply(
@@ -303,9 +291,9 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ==========================================================
+      // ============================================================
       // 好きな食べ物
-      // ==========================================================
+      // ============================================================
 
       const foodReply =
         buildExactFoodReply(
@@ -331,9 +319,9 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ==========================================================
-      // Web検索判定
-      // ==========================================================
+      // ============================================================
+      // 検索判定
+      // ============================================================
 
       const searchDecision =
         decideSearch(
@@ -384,19 +372,15 @@ async function handleEvents(events, env) {
         }
       }
 
-      // ==========================================================
-      // AIへ渡す情報
-      // ==========================================================
+      const japanNow =
+        getJapanDateTime();
 
       let systemPrompt = "";
       let aiHistory = [];
 
-      const japanNow =
-        getJapanDateTime();
-
-      // ==========================================================
+      // ============================================================
       // Web検索回答
-      // ==========================================================
+      // ============================================================
 
       if (searchDecision.search) {
         const sourcesText =
@@ -412,6 +396,9 @@ ${item.title}
 公開・更新日:
 ${item.publishedDate || "不明"}
 
+コード側の開催期間判定:
+${item.temporalInfo || "開催期間を自動判定できる記載なし"}
+
 内容:
 ${item.content}
 `
@@ -420,131 +407,135 @@ ${item.content}
 
         systemPrompt = `
 あなたの名前は「ちゃぴ」。
-LINEで話す、明るく親しみやすい博多の女の子です。
+LINEで話す明るく親しみやすい博多の女の子です。
 
-現在の日本時間は
+現在の日本時間:
 ${japanNow}
-です。
 
 今回の質問はWeb検索済みです。
 
 
-【最重要ルール】
+【最重要】
 
-・下の検索資料だけを根拠に回答する
-・モデル自身の古い知識を追加しない
-・検索資料にない事実を想像しない
-・過去の会話やユーザーの個人情報を検索回答へ混ぜない
-・不明なことは「検索資料では確認できんかった」と答える
-・最初に結論を短く答える
-・URLは本文に書かない
+検索資料だけを根拠に回答してください。
+
+モデル自身の古い知識、
+過去の会話、
+ユーザーの個人情報を
+検索回答に混ぜてはいけません。
+
+検索資料にない
+日付、報酬、性能、仕様を
+想像して追加してはいけません。
 
 
-【現在・最新・開催中について】
+【コード側の開催期間判定】
 
-ユーザーが、
+各検索資料には、
+
+「コード側の開催期間判定」
+
+が付いている場合があります。
+
+この判定は、
+現在の日本時間と、
+資料に書かれた開催期間を
+プログラム側で比較した結果です。
+
+「開始前」
+と書いてあれば、
+絶対に「開催中」と言ってはいけません。
+
+「終了済み」
+と書いてあれば、
+絶対に「開催中」と言ってはいけません。
+
+「開催中」
+と書いてあるものだけを、
+現在開催中として扱ってください。
+
+
+【25:00表記】
+
+8月12日 25:00 は、
+8月13日 午前1:00です。
+
+24:59は、
+翌日の午前0:59です。
+
+コード側ではこの変換を済ませています。
+
+
+【最新情報】
 
 「今」
 「現在」
 「最新」
 「今来てる」
-「今きてる」
-「今やってる」
 「開催中」
 
-などと聞いた場合は、
-検索資料に書かれた開催期間と現在の日本時間を比較してください。
+と聞かれた場合は、
 
-開始前のイベントを
-「開催中」と言ってはいけません。
+古いイベントを
+現在開催中として紹介しないでください。
 
-終了済みのイベントを
-「開催中」と言ってはいけません。
+開始前イベントは
+「これから始まるイベント」
 
-開始前なら
-「開催予定」
-
-終了済みなら
+終了済みは
 「終了済み」
 
-現在期間内なら
-「開催中」
-
-と区別してください。
-
-
-【25:00などの時刻】
-
-日本のゲーム記事では
-「8月12日 25:00」
-のような表記があります。
-
-25:00は、
-翌日の午前1:00を意味します。
-
-現在時刻より開始時刻が後なら、
-「まだ開始前」と判断してください。
+と分けてください。
 
 
 【情報が食い違う場合】
 
-複数資料で、
-開催期間・数字・仕様などが違う場合は、
-勝手にどちらかを正しいと決めないでください。
-
-公式情報や
-より新しい情報を優先してください。
-
-それでも判断できない場合は、
+資料同士で開催期間や数字が違う場合は、
 
 「情報によって表記が違っとる」
 
 と伝えてください。
 
+公式情報、
+より新しい情報、
+コード側の期間判定を優先してください。
+
 
 【ダダサバイバー】
 
-ダダサイバー、
-ダダサバイバー、
-Survivor.io
-は文脈上同じゲームを指す場合があります。
+ダダサバイバーとSurvivor.ioは
+同じゲームとして扱って構いません。
 
-ダダサバイバーについて聞かれた場合は、
+以下の質問では
+検索資料を比較してください。
 
-・現在のイベント
+・イベント
 ・イベント交換
-・無課金攻略
 ・S級軍備
 ・装備
-・キャラ
 ・サバイバー
+・キャラ
 ・コレクション
 ・欠片
 ・テックパーツ
 ・ペット
 ・覚醒
+・無課金攻略
 ・ギフトコード
 ・アップデート
 
-などを検索資料から比較してください。
 
+【攻略相談】
 
-【攻略判断】
-
-ユーザーが、
-
-「どれが強い？」
-「一番強いのは？」
+「何が一番強い？」
 「どれがおすすめ？」
 「何を交換？」
 「無課金なら？」
 「何を育てる？」
 「どっちがいい？」
 
-などと聞いた場合は、
-
-検索資料を比較したうえで、
-まず結論を答えてください。
+などの場合は、
+最初に結論を答えてください。
 
 例:
 
@@ -552,22 +543,11 @@ Survivor.io
 
 そのあと理由を短く説明してください。
 
-検索資料だけでは順位を決められない場合は、
-勝手に順位を作らず、
+資料だけでは判断不能なら、
 
-「今の資料だけではどっちが上か断定できん」
+「今の検索資料だけでは断定できん」
 
 と答えてください。
-
-
-【古い記事】
-
-2022年、2023年、2024年などの古いイベント記事が
-検索資料に含まれていても、
-現在開催中とは判断しないでください。
-
-現在の情報を聞かれた場合は、
-${japanNow} に近い情報を優先してください。
 
 
 【話し方】
@@ -577,18 +557,8 @@ ${japanNow} に近い情報を優先してください。
 ・自然な博多弁
 ・友達とのLINEのように話す
 ・長すぎない
+・毎回無理に質問で終わらせない
 ・絵文字は少しだけ
-
-
-【使ってよい博多弁】
-
-〜ばい
-〜たい
-〜と？
-〜けん
-よかよ
-〜しとる
-〜しよった
 
 
 【禁止する関西弁】
@@ -607,14 +577,21 @@ ${japanNow} に近い情報を優先してください。
 なるんや
 
 
+【URL】
+
+URLは本文に書かないでください。
+
+参考URLはプログラム側で付けます。
+
+
 【検索資料】
 
 ${sourcesText}
 `;
 
-      // ==========================================================
+      // ============================================================
       // 普通の会話
-      // ==========================================================
+      // ============================================================
 
       } else {
         const relevant =
@@ -638,9 +615,6 @@ LINEにいる、
 
 友達とのLINEのように自然に話してください。
 
-
-【基本】
-
 ・自分のことは「ちゃぴ」
 ・「俺」「僕」は使わない
 ・自然な博多弁
@@ -648,43 +622,16 @@ LINEにいる、
 ・絵文字は少しだけ
 ・知らないことを作らない
 ・毎回無理に質問で終わらせない
+・関西弁は禁止
 
-
-【使ってよい博多弁】
-
-〜ばい
-〜たい
-〜と？
-〜けん
-よかよ
-〜しとる
-〜しよった
-
-
-【禁止する関西弁】
-
-やで
-やん
-せや
-ほんま
-なんでやねん
-ええで
-ええやろ
-なんや
-やったんや
-あるんや
-できるんや
-なるんや
-
-
-【今回使ってよい長期記憶】
+今回使ってよい長期記憶:
 
 ${memoryText}
 
-記憶にないことを、
+記憶にないことを
 覚えているふりしてはいけません。
 
-ユーザーが聞いていない記憶を、
+ユーザーが聞いていない記憶を
 突然話題に出してはいけません。
 `;
 
@@ -695,20 +642,22 @@ ${memoryText}
       const messages = [
         {
           role: "system",
-          content: systemPrompt,
+          content:
+            systemPrompt,
         },
 
         ...aiHistory,
 
         {
           role: "user",
-          content: userMessage,
+          content:
+            userMessage,
         },
       ];
 
-      // ==========================================================
-      // AI実行
-      // ==========================================================
+      // ============================================================
+      // AI
+      // ============================================================
 
       let rawAI = null;
 
@@ -721,7 +670,7 @@ ${memoryText}
               ? 1800
               : 1100,
             searchDecision.search
-              ? 0.12
+              ? 0.1
               : 0.45
           );
       } catch (error) {
@@ -736,56 +685,54 @@ ${memoryText}
           rawAI
         );
 
-      // ==========================================================
-      // reasoningだけで終わった場合の再試行
-      // ==========================================================
+      // ============================================================
+      // Qwen reasoning対策
+      // ============================================================
 
       if (!replyText) {
         try {
-          const retryPrompt =
-            searchDecision.search
-              ? `
-現在の日本時間:
-${japanNow}
-
-質問:
-${userMessage}
-
-以下の検索資料だけを使って、
-日本語で最終回答だけ返してください。
-
-開催中・開始前・終了済みは、
-現在時刻と開催期間を比較して判断してください。
-
-資料:
-${searchData.results
-  .slice(0, 5)
-  .map(
-    (item, index) =>
-      `資料${index + 1}: ${item.title}\n${item.content}`
-  )
-  .join("\n\n")}
-`
-              : `
-質問:
-${userMessage}
-
-日本語で、
-ユーザーに見せる最終回答だけ返してください。
-`;
-
           const retry =
             await runAI(
               [
                 {
                   role: "system",
                   content:
-                    "思考過程は出力せず、最終回答だけ返してください。",
+                    "思考過程は出力せず、日本語の最終回答だけ返してください。",
                 },
                 {
                   role: "user",
                   content:
-                    retryPrompt,
+                    searchDecision.search
+                      ? `
+現在の日本時間:
+${japanNow}
+
+質問:
+${userMessage}
+
+以下の検索資料だけを使って答えてください。
+
+コード側で「開始前」と判定されたイベントは開催中と言わないでください。
+
+${searchData.results
+  .slice(0, 5)
+  .map(
+    (item, index) => `
+資料${index + 1}
+
+タイトル:
+${item.title}
+
+開催期間判定:
+${item.temporalInfo || "なし"}
+
+内容:
+${item.content}
+`
+  )
+  .join("\n")}
+`
+                      : userMessage,
                 },
               ],
               env,
@@ -815,9 +762,9 @@ ${userMessage}
           replyText
         );
 
-      // ==========================================================
+      // ============================================================
       // 参考URL
-      // ==========================================================
+      // ============================================================
 
       let lineReply =
         replyText;
@@ -851,10 +798,6 @@ ${userMessage}
         }
       }
 
-      // ==========================================================
-      // 履歴保存
-      // ==========================================================
-
       await saveHistory(
         env,
         historyKey,
@@ -862,10 +805,6 @@ ${userMessage}
         userMessage,
         replyText
       );
-
-      // ==========================================================
-      // LINE返信
-      // ==========================================================
 
       await replyToLine(
         event.replyToken,
@@ -896,10 +835,6 @@ function decideSearch(message) {
   const lower =
     text.toLowerCase();
 
-  // ============================================================
-  // 個人記憶確認は検索しない
-  // ============================================================
-
   const memoryTerms = [
     "俺の名前",
     "私の名前",
@@ -921,10 +856,6 @@ function decideSearch(message) {
       query: "",
     };
   }
-
-  // ============================================================
-  // ダダサバ関連は原則検索
-  // ============================================================
 
   const survivorTerms = [
     "ダダサバ",
@@ -950,6 +881,7 @@ function decideSearch(message) {
   ) {
     return {
       search: true,
+
       query:
         buildSearchQuery(
           text,
@@ -957,10 +889,6 @@ function decideSearch(message) {
         ),
     };
   }
-
-  // ============================================================
-  // 一般Web検索
-  // ============================================================
 
   const webTerms = [
     "調べて",
@@ -1004,7 +932,7 @@ function decideSearch(message) {
 
 
 // ============================================================
-// 検索語作成
+// 検索語
 // ============================================================
 
 function buildSearchQuery(
@@ -1096,11 +1024,7 @@ async function searchWeb(query, env) {
     getJapanDateParts();
 
   const cacheKey =
-    `search:v60:${simpleHash(query)}`;
-
-  // ============================================================
-  // キャッシュ
-  // ============================================================
+    `search:v70:${simpleHash(query)}`;
 
   try {
     const cached =
@@ -1130,10 +1054,6 @@ async function searchWeb(query, env) {
     );
   }
 
-  // ============================================================
-  // 検索語候補
-  // ============================================================
-
   const queries = [
     query,
   ];
@@ -1148,35 +1068,28 @@ async function searchWeb(query, env) {
     );
   }
 
-  // ============================================================
-  // 検索
-  // ============================================================
-
-  const requests =
-    queries.map(
-      async q => {
-        try {
-          return await callTavily(
-            q,
-            env
-          );
-        } catch (error) {
-          console.error(
-            "TAVILY QUERY ERROR:",
-            q,
-            error
-          );
-
-          return {
-            results: [],
-          };
-        }
-      }
-    );
-
   const responses =
     await Promise.all(
-      requests
+      queries.map(
+        async q => {
+          try {
+            return await callTavily(
+              q,
+              env
+            );
+          } catch (error) {
+            console.error(
+              "TAVILY ERROR:",
+              q,
+              error
+            );
+
+            return {
+              results: [],
+            };
+          }
+        }
+      )
     );
 
   let rawResults = [];
@@ -1195,11 +1108,6 @@ async function searchWeb(query, env) {
     }
   }
 
-  // ============================================================
-  // 安全性だけでフィルター
-  // 関連度が低いという理由で全部捨てない
-  // ============================================================
-
   let results =
     rawResults
       .filter(
@@ -1212,60 +1120,62 @@ async function searchWeb(query, env) {
         isSafeSearchResult
       )
       .map(
-        item => ({
-          title:
-            String(
-              item.title || ""
-            ),
-
-          url:
-            String(
-              item.url || ""
-            ),
-
-          content:
+        item => {
+          const content =
             String(
               item.content || ""
             ).slice(
               0,
               2400
-            ),
+            );
 
-          score:
-            typeof item.score === "number"
-              ? item.score
-              : 0,
+          return {
+            title:
+              String(
+                item.title || ""
+              ),
 
-          publishedDate:
-            String(
-              item.published_date ||
-              item.publishedDate ||
-              ""
-            ),
+            url:
+              String(
+                item.url || ""
+              ),
 
-          rankScore:
-            calculateRankScore(
-              item,
-              query,
-              survivor,
-              now
-            ),
-        })
+            content,
+
+            score:
+              typeof item.score ===
+                "number"
+                ? item.score
+                : 0,
+
+            publishedDate:
+              String(
+                item.published_date ||
+                item.publishedDate ||
+                ""
+              ),
+
+            temporalInfo:
+              buildTemporalInfo(
+                `${item.title || ""}\n${content}`
+              ),
+
+            rankScore:
+              calculateRankScore(
+                item,
+                query,
+                survivor,
+                now
+              ),
+          };
+        }
       );
-
-  // ============================================================
-  // 新しさ・信頼性・関連性で並べ替え
-  // ============================================================
 
   results.sort(
     (a, b) =>
       b.rankScore -
       a.rankScore
   );
-
-  // ============================================================
-  // 同一ドメインばかりにならないようにする
-  // ============================================================
 
   const selected = [];
   const domainCounts =
@@ -1286,7 +1196,9 @@ async function searchWeb(query, env) {
       continue;
     }
 
-    selected.push(item);
+    selected.push(
+      item
+    );
 
     domainCounts.set(
       domain,
@@ -1317,13 +1229,18 @@ async function searchWeb(query, env) {
 
         publishedDate:
           item.publishedDate,
+
+        temporalInfo:
+          item.temporalInfo,
       })
     );
 
   const result = {
     query,
+
     results:
       finalResults,
+
     searchedAt:
       new Date()
         .toISOString(),
@@ -1356,7 +1273,7 @@ async function searchWeb(query, env) {
 
 
 // ============================================================
-// Tavily API
+// Tavily
 // ============================================================
 
 async function callTavily(query, env) {
@@ -1408,6 +1325,7 @@ async function callTavily(query, env) {
               "youporn.com",
               "spankbang.com",
               "onlyfans.com",
+              "search.yahoo.co.jp",
             ],
           }),
       }
@@ -1432,6 +1350,355 @@ async function callTavily(query, env) {
 
 
 // ============================================================
+// 開催期間をコード側で判定
+// ============================================================
+
+function buildTemporalInfo(text) {
+  const ranges =
+    extractJapaneseDateRanges(
+      text
+    );
+
+  if (
+    ranges.length === 0
+  ) {
+    return "";
+  }
+
+  const nowMs =
+    Date.now();
+
+  const lines =
+    ranges
+      .slice(0, 4)
+      .map(
+        range => {
+          let status = "";
+
+          if (
+            nowMs <
+            range.startMs
+          ) {
+            status =
+              "開始前";
+
+          } else if (
+            nowMs >
+            range.endMs
+          ) {
+            status =
+              "終了済み";
+
+          } else {
+            status =
+              "開催中";
+          }
+
+          return (
+            `${status} | ` +
+            `開始: ${range.startLabel} | ` +
+            `終了: ${range.endLabel}`
+          );
+        }
+      );
+
+  return lines.join(
+    "\n"
+  );
+}
+
+
+// ============================================================
+// 日本語の日付範囲抽出
+// ============================================================
+
+function extractJapaneseDateRanges(text) {
+  const value =
+    String(
+      text || ""
+    );
+
+  const current =
+    getJapanDateParts();
+
+  const results = [];
+
+  // ============================================================
+  // 時刻あり
+  // 8月12日(水)25:00 ～ 8月17日(月)24:59
+  // ============================================================
+
+  const timeRegex =
+    /(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*(\d{1,2})[:：](\d{2})\s*[~〜～\-－―]\s*(?:(\d{1,2})月)?(\d{1,2})日(?:\([^)]*\))?\s*(\d{1,2})[:：](\d{2})/g;
+
+  for (
+    const match of value.matchAll(
+      timeRegex
+    )
+  ) {
+    const startMonth =
+      Number(
+        match[1]
+      );
+
+    const startDay =
+      Number(
+        match[2]
+      );
+
+    const startHour =
+      Number(
+        match[3]
+      );
+
+    const startMinute =
+      Number(
+        match[4]
+      );
+
+    const endMonth =
+      Number(
+        match[5] ||
+        startMonth
+      );
+
+    const endDay =
+      Number(
+        match[6]
+      );
+
+    const endHour =
+      Number(
+        match[7]
+      );
+
+    const endMinute =
+      Number(
+        match[8]
+      );
+
+    let startYear =
+      current.year;
+
+    let endYear =
+      current.year;
+
+    if (
+      endMonth <
+      startMonth
+    ) {
+      endYear++;
+    }
+
+    const startMs =
+      jstToUtcMs(
+        startYear,
+        startMonth,
+        startDay,
+        startHour,
+        startMinute
+      );
+
+    const endMs =
+      jstToUtcMs(
+        endYear,
+        endMonth,
+        endDay,
+        endHour,
+        endMinute
+      );
+
+    results.push({
+      startMs,
+      endMs,
+
+      startLabel:
+        formatJstTimestamp(
+          startMs
+        ),
+
+      endLabel:
+        formatJstTimestamp(
+          endMs
+        ),
+    });
+  }
+
+  // ============================================================
+  // 日付だけ
+  // 8月12日～8月17日
+  // ============================================================
+
+  const dateRegex =
+    /(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*[~〜～\-－―]\s*(?:(\d{1,2})月)?(\d{1,2})日(?:\([^)]*\))?/g;
+
+  for (
+    const match of value.matchAll(
+      dateRegex
+    )
+  ) {
+    const fullText =
+      match[0];
+
+    // 時刻ありは二重登録しない
+    if (
+      /[:：]\d{2}/.test(
+        fullText
+      )
+    ) {
+      continue;
+    }
+
+    const startMonth =
+      Number(
+        match[1]
+      );
+
+    const startDay =
+      Number(
+        match[2]
+      );
+
+    const endMonth =
+      Number(
+        match[3] ||
+        startMonth
+      );
+
+    const endDay =
+      Number(
+        match[4]
+      );
+
+    let startYear =
+      current.year;
+
+    let endYear =
+      current.year;
+
+    if (
+      endMonth <
+      startMonth
+    ) {
+      endYear++;
+    }
+
+    const startMs =
+      jstToUtcMs(
+        startYear,
+        startMonth,
+        startDay,
+        0,
+        0
+      );
+
+    const endMs =
+      jstToUtcMs(
+        endYear,
+        endMonth,
+        endDay,
+        23,
+        59
+      );
+
+    results.push({
+      startMs,
+      endMs,
+
+      startLabel:
+        formatJstTimestamp(
+          startMs
+        ),
+
+      endLabel:
+        formatJstTimestamp(
+          endMs
+        ),
+    });
+  }
+
+  // 重複除去
+  const map =
+    new Map();
+
+  for (const item of results) {
+    const key =
+      `${item.startMs}:${item.endMs}`;
+
+    if (!map.has(key)) {
+      map.set(
+        key,
+        item
+      );
+    }
+  }
+
+  return [
+    ...map.values(),
+  ];
+}
+
+
+// ============================================================
+// JST日時 → UTCミリ秒
+//
+// 25:00などもDate.UTCが自動で翌日にしてくれる
+// ============================================================
+
+function jstToUtcMs(
+  year,
+  month,
+  day,
+  hour,
+  minute
+) {
+  return Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour - 9,
+    minute,
+    0
+  );
+}
+
+
+// ============================================================
+// JST日時表示
+// ============================================================
+
+function formatJstTimestamp(ms) {
+  return new Intl.DateTimeFormat(
+    "ja-JP",
+    {
+      timeZone:
+        "Asia/Tokyo",
+
+      year:
+        "numeric",
+
+      month:
+        "2-digit",
+
+      day:
+        "2-digit",
+
+      hour:
+        "2-digit",
+
+      minute:
+        "2-digit",
+
+      hourCycle:
+        "h23",
+    }
+  ).format(
+    new Date(ms)
+  );
+}
+
+
+// ============================================================
 // 検索順位
 // ============================================================
 
@@ -1441,18 +1708,8 @@ function calculateRankScore(
   survivor,
   now
 ) {
-  const title =
-    String(
-      item?.title || ""
-    );
-
-  const content =
-    String(
-      item?.content || ""
-    );
-
   const text =
-    `${title} ${content}`
+    `${item?.title || ""} ${item?.content || ""}`
       .toLowerCase();
 
   let score =
@@ -1465,10 +1722,6 @@ function calculateRankScore(
     getDomain(
       item?.url || ""
     );
-
-  // ============================================================
-  // 信頼サイト
-  // ============================================================
 
   const highestTrust = [
     "play.google.com",
@@ -1509,10 +1762,6 @@ function calculateRankScore(
     score += 4;
   }
 
-  // ============================================================
-  // ダダサバ関連
-  // ============================================================
-
   if (survivor) {
     if (
       text.includes(
@@ -1550,52 +1799,32 @@ function calculateRankScore(
 
     if (
       text.includes(
-        String(now.year)
+        String(
+          now.year
+        )
       )
     ) {
       score += 3;
-    }
-
-    if (
-      text.includes(
-        "4周年"
-      )
-    ) {
-      score += 3;
-    }
-
-    if (
-      text.includes(
-        "周年"
-      )
-    ) {
-      score += 1;
     }
   }
 
-  // ============================================================
-  // 古い年を少し下げる
-  // ============================================================
-
-  const currentYear =
-    now.year;
-
   for (
     let year = 2022;
-    year < currentYear;
+    year < now.year;
     year++
   ) {
     if (
       text.includes(
-        String(year)
+        String(
+          year
+        )
       )
     ) {
-      const age =
-        currentYear -
-        year;
-
       score -=
-        age * 1.5;
+        (
+          now.year -
+          year
+        ) * 1.5;
     }
   }
 
@@ -1604,7 +1833,7 @@ function calculateRankScore(
 
 
 // ============================================================
-// ダダサ検索判定
+// ダダサ判定
 // ============================================================
 
 function isSurvivorQuery(text) {
@@ -1637,11 +1866,7 @@ function isSafeSearchResult(item) {
       item?.url || ""
     ).toLowerCase();
 
-  const text =
-    `${item?.title || ""} ${item?.content || ""}`
-      .toLowerCase();
-
-  const blockedDomains = [
+  const blocked = [
     "xvideos.",
     "xhamster.",
     "pornhub.",
@@ -1650,43 +1875,20 @@ function isSafeSearchResult(item) {
     "youporn.",
     "spankbang.",
     "onlyfans.",
+    "search.yahoo.co.jp",
   ];
 
-  if (
-    blockedDomains.some(
-      domain =>
-        url.includes(
-          domain
-        )
-    )
-  ) {
-    return false;
-  }
-
-  const blockedWords = [
-    "porn",
-    "porno",
-    "ポルノ動画",
-    "アダルト動画",
-  ];
-
-  if (
-    blockedWords.some(
-      word =>
-        text.includes(
-          word
-        )
-    )
-  ) {
-    return false;
-  }
-
-  return true;
+  return !blocked.some(
+    domain =>
+      url.includes(
+        domain
+      )
+  );
 }
 
 
 // ============================================================
-// 検索結果統合
+// 検索結果結合
 // ============================================================
 
 function mergeResults(first, second) {
@@ -1749,7 +1951,7 @@ async function runAI(
 
 
 // ============================================================
-// AI返答抽出
+// AI返答取得
 // ============================================================
 
 function extractAIText(response) {
@@ -1776,9 +1978,7 @@ function extractAIText(response) {
       "string" &&
     response.response.trim()
   ) {
-    return (
-      response.response.trim()
-    );
+    return response.response.trim();
   }
 
   if (
@@ -1813,10 +2013,6 @@ function extractMemories(text) {
     new Date()
       .toISOString();
 
-  // ============================================================
-  // 名前
-  // ============================================================
-
   const name =
     text.match(
       /(?:俺|私|僕)の名前は[「『]?([^、。！!？?\s]+?)[」』]?(?:って|と)?覚え/
@@ -1840,10 +2036,6 @@ function extractMemories(text) {
     });
   }
 
-  // ============================================================
-  // 呼び方
-  // ============================================================
-
   const nicknamePatterns = [
     /呼び方は[「『]?([^、。！!？?\s]+?)[」』]?(?:でいい|でよい|にして|って)/,
     /[「『]?([^、。！!？?\s]+?)[」』]?(?:って|と)呼んで/,
@@ -1853,7 +2045,9 @@ function extractMemories(text) {
     const pattern of nicknamePatterns
   ) {
     const match =
-      text.match(pattern);
+      text.match(
+        pattern
+      );
 
     if (match?.[1]) {
       result.push({
@@ -1875,10 +2069,6 @@ function extractMemories(text) {
       break;
     }
   }
-
-  // ============================================================
-  // 好きな食べ物
-  // ============================================================
 
   const food =
     text.match(
@@ -1937,10 +2127,6 @@ function migrateAllMemories(raw) {
         item ||
         ""
       );
-
-    // ============================================================
-    // 旧好きな食べ物
-    // ============================================================
 
     const foodMatch =
       text.match(
@@ -2037,6 +2223,7 @@ function upsertMemory(
   ) {
     copy[index] =
       item;
+
   } else {
     copy.push(
       item
@@ -2048,7 +2235,7 @@ function upsertMemory(
 
 
 // ============================================================
-// 記憶保存時返答
+// 記憶保存返答
 // ============================================================
 
 function buildSavedReply(items) {
@@ -2108,7 +2295,7 @@ function buildSavedReply(items) {
 
 
 // ============================================================
-// 名前・呼び方確認
+// 名前・呼び方
 // ============================================================
 
 function buildExactProfileReply(
@@ -2179,7 +2366,7 @@ function buildExactProfileReply(
 
 
 // ============================================================
-// 好きな食べ物確認
+// 好きな食べ物
 // ============================================================
 
 function buildExactFoodReply(
@@ -2246,7 +2433,7 @@ function getMemory(
 
 
 // ============================================================
-// 関連記憶だけ
+// 関連記憶
 // ============================================================
 
 function selectRelevantMemories(
@@ -2254,8 +2441,12 @@ function selectRelevantMemories(
   memories
 ) {
   if (
-    message.includes("名前") ||
-    message.includes("呼び")
+    message.includes(
+      "名前"
+    ) ||
+    message.includes(
+      "呼び"
+    )
   ) {
     return memories.filter(
       item =>
@@ -2279,10 +2470,6 @@ function selectRelevantMemories(
   return [];
 }
 
-
-// ============================================================
-// 記憶→テキスト
-// ============================================================
 
 function memoryToText(item) {
   if (
@@ -2315,7 +2502,7 @@ function memoryToText(item) {
 
 
 // ============================================================
-// 記憶文字列整形
+// 記憶文字整形
 // ============================================================
 
 function cleanMemoryValue(value) {
@@ -2363,7 +2550,7 @@ function cleanFoodValue(value) {
 
 
 // ============================================================
-// AI回答整形
+// 返答整形
 // ============================================================
 
 function cleanReply(text) {
@@ -2427,7 +2614,7 @@ function cleanReply(text) {
 
 
 // ============================================================
-// KV読み込み
+// KV
 // ============================================================
 
 async function readArrayKV(
@@ -2466,10 +2653,6 @@ async function readArrayKV(
 }
 
 
-// ============================================================
-// KV保存
-// ============================================================
-
 async function safeKVPut(
   env,
   key,
@@ -2492,7 +2675,7 @@ async function safeKVPut(
 
 
 // ============================================================
-// 履歴保存
+// 履歴
 // ============================================================
 
 async function saveHistory(
@@ -2506,13 +2689,19 @@ async function saveHistory(
     ...history,
 
     {
-      role: "user",
-      content: userMessage,
+      role:
+        "user",
+
+      content:
+        userMessage,
     },
 
     {
-      role: "assistant",
-      content: replyText,
+      role:
+        "assistant",
+
+      content:
+        replyText,
     },
 
   ].slice(-16);
@@ -2526,7 +2715,7 @@ async function saveHistory(
 
 
 // ============================================================
-// LINE返信
+// LINE
 // ============================================================
 
 async function replyToLine(
@@ -2542,7 +2731,8 @@ async function replyToLine(
     await fetch(
       "https://api.line.me/v2/bot/message/reply",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           "Content-Type":
@@ -2558,7 +2748,8 @@ async function replyToLine(
 
             messages: [
               {
-                type: "text",
+                type:
+                  "text",
 
                 text:
                   String(
@@ -2575,7 +2766,7 @@ async function replyToLine(
 
   if (!response.ok) {
     console.error(
-      "LINE REPLY ERROR:",
+      "LINE ERROR:",
       response.status,
       await response.text()
     );
@@ -2616,7 +2807,8 @@ function getJapanDateParts() {
       Number(
         parts.find(
           item =>
-            item.type === type
+            item.type ===
+            type
         )?.value ||
         0
       );
@@ -2700,7 +2892,7 @@ function getEnglishMonth(month) {
 
 
 // ============================================================
-// ドメイン取得
+// その他
 // ============================================================
 
 function getDomain(url) {
@@ -2713,10 +2905,6 @@ function getDomain(url) {
   }
 }
 
-
-// ============================================================
-// ハッシュ
-// ============================================================
 
 function simpleHash(text) {
   const value =
@@ -2750,10 +2938,6 @@ function simpleHash(text) {
   ).toString(16);
 }
 
-
-// ============================================================
-// JSONレスポンス
-// ============================================================
 
 function jsonResponse(data) {
   return new Response(
