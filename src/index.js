@@ -1,5 +1,86 @@
 export default {
   async fetch(request, env, ctx) {
+
+    // ==========================================
+    // SerpApi.Org 単体検索テスト
+    // ==========================================
+    if (request.method === "GET") {
+      const url = new URL(request.url);
+
+      if (url.searchParams.get("check") === "search") {
+        try {
+          if (!env.SERPAPI_API_KEY) {
+            return jsonResponse({
+              success: false,
+              error: "SERPAPI_API_KEY が設定されていません"
+            });
+          }
+
+          const searchUrl = new URL(
+            "https://serpapi.org/api/v1/webs-search"
+          );
+
+          searchUrl.searchParams.set(
+            "keyword",
+            "ダダサバイバー 最新情報"
+          );
+          searchUrl.searchParams.set("gl", "JP");
+          searchUrl.searchParams.set("hl", "ja");
+          searchUrl.searchParams.set("size", "5");
+          searchUrl.searchParams.set(
+            "token",
+            env.SERPAPI_API_KEY
+          );
+
+          const response = await fetch(searchUrl.toString());
+
+          const text = await response.text();
+
+          let data;
+
+          try {
+            data = JSON.parse(text);
+          } catch {
+            return jsonResponse({
+              success: false,
+              status: response.status,
+              error: "検索APIからJSON以外が返りました",
+              raw: text.slice(0, 1000)
+            });
+          }
+
+          if (!response.ok) {
+            return jsonResponse({
+              success: false,
+              status: response.status,
+              apiResponse: data
+            });
+          }
+
+          const items = data?.data?.items || [];
+
+          return jsonResponse({
+            success: true,
+            query: "ダダサバイバー 最新情報",
+            searchEngine: data?.data?.search_engine || null,
+            results: items.slice(0, 5).map(item => ({
+              title: item.title || "",
+              link: item.link || "",
+              description: item.description || ""
+            }))
+          });
+
+        } catch (error) {
+          return jsonResponse({
+            success: false,
+            error: String(error)
+          });
+        }
+      }
+
+      return new Response("ちゃぴAI is running!");
+    }
+
     if (request.method !== "POST") {
       return new Response("ちゃぴAI is running!");
     }
@@ -119,7 +200,6 @@ async function handleEvents(events, env) {
           });
         }
 
-        // 最大50件
         memories = memories.slice(-50);
 
         try {
@@ -138,7 +218,6 @@ async function handleEvents(events, env) {
         }
       }
 
-      // 会話履歴は直近16件
       history = history.slice(-16);
 
       const rememberedText =
@@ -259,7 +338,6 @@ ${rememberedText}
         JSON.stringify(aiResponse)
       );
 
-      // Qwen3はchoices形式を優先
       const replyText =
         extractAIText(aiResponse) ||
         "ごめん、今うまく返事できんかった💦";
@@ -307,7 +385,6 @@ ${rememberedText}
 function extractAIText(aiResponse) {
   if (!aiResponse) return "";
 
-  // Qwen3などOpenAI互換形式
   const choiceContent =
     aiResponse?.choices?.[0]?.message?.content;
 
@@ -318,7 +395,6 @@ function extractAIText(aiResponse) {
     return choiceContent.trim();
   }
 
-  // 一部Workers AIモデル
   if (
     typeof aiResponse?.response === "string" &&
     aiResponse.response.trim()
@@ -326,7 +402,6 @@ function extractAIText(aiResponse) {
     return aiResponse.response.trim();
   }
 
-  // 念のため
   if (
     typeof aiResponse?.result?.response === "string" &&
     aiResponse.result.response.trim()
@@ -367,4 +442,16 @@ async function replyToLine(replyToken, text, env) {
       await response.text()
     );
   }
+}
+
+// JSONテスト表示用
+function jsonResponse(data) {
+  return new Response(
+    JSON.stringify(data, null, 2),
+    {
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8"
+      }
+    }
+  );
 }
