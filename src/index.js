@@ -57,7 +57,7 @@ export default {
       return new Response("OK");
     } catch (error) {
       console.error(error);
-      return new Response("ERROR", { status: 500 });
+      return new Response("ERROR", { status: 500 }); 
     }
   },
 };
