@@ -14,12 +14,12 @@ export default {
 
     const events = body.events || [];
 
+    // LINEには即200を返して処理は裏で続行
     ctx.waitUntil(handleEvents(events, env));
 
     return new Response("OK");
   },
 };
-
 
 async function handleEvents(events, env) {
   for (const event of events) {
@@ -38,9 +38,9 @@ async function handleEvents(events, env) {
       const historyKey = `history:${conversationId}`;
       const memoryKey = `memory:${conversationId}`;
 
-      // ==========================================
+      // =========================
       // 会話履歴
-      // ==========================================
+      // =========================
       let history = [];
 
       try {
@@ -54,10 +54,9 @@ async function handleEvents(events, env) {
         console.error("HISTORY READ ERROR:", error);
       }
 
-
-      // ==========================================
+      // =========================
       // 長期記憶
-      // ==========================================
+      // =========================
       let memories = [];
 
       try {
@@ -71,10 +70,9 @@ async function handleEvents(events, env) {
         console.error("MEMORY READ ERROR:", error);
       }
 
-
-      // ==========================================
+      // =========================
       // 記憶削除
-      // ==========================================
+      // =========================
       if (
         userMessage.includes("全部忘れて") ||
         userMessage.includes("記憶消して") ||
@@ -85,17 +83,16 @@ async function handleEvents(events, env) {
 
         await replyToLine(
           event.replyToken,
-          "わかったよ👌 今まで覚えとったことは全部消したばい！",
+          "わかったばい👌 今まで覚えとったことは全部消したよ！",
           env
         );
 
         continue;
       }
 
-
-      // ==========================================
-      // 長期記憶保存
-      // ==========================================
+      // =========================
+      // 長期記憶への保存
+      // =========================
       const shouldRemember =
         userMessage.includes("覚え") ||
         userMessage.includes("記憶して") ||
@@ -110,7 +107,7 @@ async function handleEvents(events, env) {
         if (!alreadyExists) {
           memories.push({
             text: userMessage,
-            savedAt: new Date().toISOString()
+            savedAt: new Date().toISOString(),
           });
         }
 
@@ -126,7 +123,6 @@ async function handleEvents(events, env) {
         }
       }
 
-
       history = history.slice(-16);
 
       const rememberedText =
@@ -136,48 +132,36 @@ async function handleEvents(events, env) {
               .join("\n")
           : "まだ特に覚えている情報はありません。";
 
-
-      // ==========================================
-      // 検索判定
-      // ==========================================
+      // =========================
+      // AIが検索の必要性を判断
+      // =========================
       const searchDecision = await decideSearch(
         userMessage,
         history,
         env
       );
 
-      console.log(
-        "SEARCH DECISION:",
-        JSON.stringify(searchDecision)
-      );
-
       let webContext = "";
       let sourceUrls = [];
-      let searched = false;
 
-
-      // ==========================================
-      // Web検索
-      // ==========================================
       if (searchDecision.search) {
         try {
           const searchResult = await searchWeb(
             searchDecision.query || userMessage,
-            searchDecision.freshness,
             env
           );
 
           if (searchResult.results.length > 0) {
-            searched = true;
-
             webContext = searchResult.results
               .slice(0, 6)
-              .map((item, index) => `
-【資料${index + 1}】
+              .map((item, index) => {
+                return `
+【検索結果 ${index + 1}】
 タイトル: ${item.title}
 概要: ${item.description}
-更新日: ${item.updatedAt || "不明"}
-`)
+URL: ${item.link}
+`;
+              })
               .join("\n");
 
             sourceUrls = searchResult.results
@@ -185,238 +169,123 @@ async function handleEvents(events, env) {
               .map(item => item.link)
               .filter(Boolean);
           }
-
         } catch (error) {
           console.error("WEB SEARCH ERROR:", error);
         }
       }
 
-
-      // ==========================================
+      // =========================
       // メインAI
-      // ==========================================
+      // =========================
       const messages = [
         {
           role: "system",
           content: `
-あなたの名前は「ちゃぴ」です。
+あなたの名前は「ちゃぴ」。
+LINEにいる、明るく親しみやすい博多の女の子です。
 
-LINEにいる明るく親しみやすい女の子として、
-友達とLINEしているように自然に会話してください。
+最優先は、友達とのLINEのように自然に会話することです。
 
-━━━━━━━━━━━━━━━━━━
-【キャラクター】
-━━━━━━━━━━━━━━━━━━
+【基本ルール】
+・自然な博多弁で話す
+・自分のことは「ちゃぴ」と呼ぶ
+・「俺」は絶対に使わない
+・関西弁は禁止
+・雑談では勝手に長い解説をしない
+・質問には結論から答える
+・基本1〜5文程度
+・必要なら少し詳しく説明する
+・会話履歴と長期記憶を使う
+・分からないことを作り話で補わない
+・絵文字は軽く自然に使う
 
-・名前は必ず「ちゃぴ」
-・自分を「ちゃび」「俺」「僕」と呼ばない
-・自然な博多弁
-・明るく親しみやすい
-・説明マシンのように話さない
-
-━━━━━━━━━━━━━━━━━━
 【博多弁】
-━━━━━━━━━━━━━━━━━━
-
-自然な範囲で、
-
+自然な範囲で
 「〜ばい」
 「〜たい」
 「〜と？」
 「〜けん」
 「よかよ」
 「〜しとる」
-「〜しよった」
-「〜やね」
-「〜なん？」
+などを使う。
 
-などを使ってください。
-
-ただし毎文方言にする必要はありません。
-
-関西弁になるくらいなら標準語を使ってください。
-
-━━━━━━━━━━━━━━━━━━
-【絶対禁止の関西弁】
-━━━━━━━━━━━━━━━━━━
-
-以下の表現は絶対に使用しません。
-
-「やで」
-「やん」
+【禁止する関西弁】
+「〜やん」
+「〜やろ」
+「〜やで」
 「せや」
 「ほんま」
 「なんでやねん」
-「ええやろ」
-「ええで」
-「できるんや」
-「あるんや」
-「なるんや」
-「なんや」
-「〜へん」
-「〜してん」
-「〜やろ〜」
 
-━━━━━━━━━━━━━━━━━━
-【会話】
-━━━━━━━━━━━━━━━━━━
+【ネット検索について】
+下にWEB検索結果がある場合は、
+必ず検索結果を根拠として回答してください。
 
-雑談：
-1〜4文程度で自然に返します。
+検索結果と自分の知識が食い違う場合は、
+最新の検索結果を優先してください。
 
-質問：
-まず結論を答えてから必要な説明をします。
+検索結果だけでは断定できない場合は
+断定せず、その旨を伝えてください。
 
-・同じ質問を繰り返さない
-・長期記憶を必要な時に使う
-・過去の会話を参考にする
-・知らないことを作らない
-・絵文字は少しだけ使う
+複数の結果がある場合は内容を比較して判断してください。
 
-━━━━━━━━━━━━━━━━━━
-【Web検索をした場合】
-━━━━━━━━━━━━━━━━━━
+検索結果に関係ないページが混ざっている場合は無視してください。
 
-Web検索結果は「資料」です。
-
-資料に書かれている事実だけを使ってください。
-
-重要：
-
-・資料にない価格を作らない
-・資料にない発売日を作らない
-・資料にない仕様を作らない
-・推測を事実として書かない
-・分からない場合は「確認できんかった」と言う
-・公式情報があれば優先する
-・質問と無関係な結果は無視する
-・古い情報を「最新」と呼ばない
-
-「最新情報」と質問された場合は、
-
-単なる製品説明ではなく、
-検索結果の中から最近追加・発表・更新された内容を優先してください。
-
-検索結果に最近の情報が確認できない場合は、
-
-「検索結果から新しい発表までは確認できんかった」
-
-など正直に伝えてください。
-
-━━━━━━━━━━━━━━━━━━
-【URLについて】
-━━━━━━━━━━━━━━━━━━
-
-回答本文に、
-
-URL
-リンク
-参考サイト一覧
-「参考：」
-「出典：」
-
-を書いてはいけません。
-
-参考URLはシステムが回答の最後に自動追加します。
-
-━━━━━━━━━━━━━━━━━━
 【長期記憶】
-━━━━━━━━━━━━━━━━━━
-
 ${rememberedText}
 
-━━━━━━━━━━━━━━━━━━
-【Web検索状況】
-━━━━━━━━━━━━━━━━━━
-
-${searched ? "Web検索済み" : "Web検索なし"}
-
-━━━━━━━━━━━━━━━━━━
-【検索資料】
-━━━━━━━━━━━━━━━━━━
-
-${webContext || "なし"}
-`
+【WEB検索結果】
+${webContext || "今回はネット検索していません。"}
+`,
         },
 
         ...history,
 
         {
           role: "user",
-          content: userMessage
-        }
+          content: userMessage,
+        },
       ];
-
 
       const aiResponse = await env.AI.run(
         "@cf/qwen/qwen3-30b-a3b-fp8",
         {
           messages,
-          max_tokens: 700,
-          temperature: 0.3,
-          repetition_penalty: 1.1
+          max_tokens: 400,
+          temperature: 0.45,
+          repetition_penalty: 1.1,
         }
       );
-
 
       let replyText =
         extractAIText(aiResponse) ||
         "ごめん、今うまく返事できんかった💦";
 
-
-      // ==========================================
-      // 必ず最終品質チェック
-      // ==========================================
-      try {
-        replyText = await finalCheck(
-          replyText,
-          userMessage,
-          searched,
-          webContext,
-          env
-        );
-      } catch (error) {
-        console.error("FINAL CHECK ERROR:", error);
-      }
-
-
-      // ==========================================
-      // 万一残ったURL等を除去
-      // ==========================================
-      replyText = cleanReply(replyText);
-
-
-      // ==========================================
-      // LINE表示用
-      // ==========================================
-      let lineReply = replyText;
-
+      // 検索した場合だけ参考URLを付ける
       if (sourceUrls.length > 0) {
         const uniqueUrls = [...new Set(sourceUrls)];
 
-        lineReply +=
+        replyText +=
           "\n\n🔎 参考\n" +
           uniqueUrls
             .map((url, i) => `${i + 1}. ${url}`)
             .join("\n");
       }
 
-
-      // ==========================================
-      // 履歴には本文だけ保存
-      // ==========================================
+      // =========================
+      // 会話履歴保存
+      // =========================
       const newHistory = [
         ...history,
         {
           role: "user",
-          content: userMessage
+          content: userMessage,
         },
         {
           role: "assistant",
-          content: replyText
-        }
+          content: replyText,
+        },
       ].slice(-16);
-
 
       try {
         await env.MEMORY.put(
@@ -427,13 +296,11 @@ ${webContext || "なし"}
         console.error("HISTORY WRITE ERROR:", error);
       }
 
-
       await replyToLine(
         event.replyToken,
-        lineReply,
+        replyText,
         env
       );
-
     } catch (error) {
       console.error("CHAPI EVENT ERROR:", error);
     }
@@ -442,8 +309,9 @@ ${webContext || "なし"}
 
 
 // ==============================================
-// 検索要否判定
+// 検索が必要かAI自身に判断させる
 // ==============================================
+
 async function decideSearch(userMessage, history, env) {
   try {
     const recentHistory = history
@@ -458,133 +326,98 @@ async function decideSearch(userMessage, history, env) {
           {
             role: "system",
             content: `
-Web検索が必要か判断してください。
+あなたはWeb検索の要否を判断する係です。
 
-search=true：
-
+以下の場合は search=true:
 ・最新情報
 ・現在の情報
-・今日の情報
 ・ニュース
+・今日や今の状況
+・ゲームの現在のイベントや環境
 ・価格
-・発売状況
-・現在開催中イベント
-・ゲームの最新環境
-・アップデート
-・現在のサービス仕様
-・「調べて」
-・「検索して」
-・変化しやすい情報
+・発売情報
+・スポーツ結果
+・天気
+・最新アップデート
+・サービスや商品の現在仕様
+・ユーザーが「調べて」「検索して」と言った時
+・自分の知識だけでは古い可能性が高い質問
 
-search=false：
-
-・挨拶
+以下は search=false:
 ・雑談
 ・相談
-・感想
-・長期記憶
-・過去の会話
-・時期に左右されない一般知識
+・挨拶
+・過去の会話についての質問
+・長期記憶についての質問
+・一般的で時期に左右されない知識
 
-freshness：
+必ずJSONだけで返してください。
 
-day = 今日
-week = 最新・最近
-month = 今月
-none = 指定不要
-
-必ずJSONのみ。
-
-{"search":true,"query":"検索語","freshness":"week"}
+形式:
+{"search":true,"query":"実際に検索する短い検索語"}
 
 または
 
-{"search":false,"query":"","freshness":"none"}
-`
+{"search":false,"query":""}
+`,
           },
-
           {
             role: "user",
             content: `
-直近：
+直近の会話:
 ${recentHistory}
 
-今回：
+今回の発言:
 ${userMessage}
-`
-          }
+`,
+          },
         ],
-
-        max_tokens: 100,
-        temperature: 0.1
+        max_tokens: 80,
+        temperature: 0.1,
       }
     );
 
-
     const text = extractAIText(response);
 
-    const match =
-      text.match(/\{[\s\S]*\}/);
+    const match = text.match(/\{[\s\S]*\}/);
 
     if (match) {
-      const parsed =
-        JSON.parse(match[0]);
+      const parsed = JSON.parse(match[0]);
 
       return {
-        search:
-          parsed.search === true,
-
+        search: parsed.search === true,
         query:
           typeof parsed.query === "string"
             ? parsed.query.trim()
             : "",
-
-        freshness:
-          ["day", "week", "month", "none"]
-            .includes(parsed.freshness)
-            ? parsed.freshness
-            : "none"
       };
     }
-
   } catch (error) {
-    console.error(
-      "SEARCH DECISION ERROR:",
-      error
-    );
+    console.error("SEARCH DECISION ERROR:", error);
   }
 
-
-  const words = [
+  // AI判定が失敗した時の保険
+  const fallbackWords = [
     "最新",
     "現在",
+    "今の",
+    "今日",
     "ニュース",
     "価格",
     "発売",
     "イベント",
     "アップデート",
     "検索して",
-    "調べて"
+    "調べて",
   ];
 
-  const shouldSearch =
-    words.some(word =>
-      userMessage.includes(word)
-    );
-
+  const shouldSearch = fallbackWords.some(word =>
+    userMessage.includes(word)
+  );
 
   return {
     search: shouldSearch,
-    query:
-      shouldSearch
-        ? userMessage
-        : "",
-    freshness:
-      userMessage.includes("今日")
-        ? "day"
-        : userMessage.includes("最新")
-          ? "week"
-          : "none"
+    query: shouldSearch ? userMessage : "",
   };
 }
 
@@ -592,25 +425,16 @@ ${userMessage}
 // ==============================================
 // Web検索
 // ==============================================
-async function searchWeb(
-  query,
-  freshness,
-  env
-) {
 
-  const cacheKey =
-    `search:${simpleHash(
-      `${query}:${freshness}`
-    )}`;
+async function searchWeb(query, env) {
+  const cacheKey = `search:${simpleHash(query)}`;
 
-
+  // 15分キャッシュ
   try {
-    const cached =
-      await env.MEMORY.get(cacheKey);
+    const cached = await env.MEMORY.get(cacheKey);
 
     if (cached) {
-      const parsed =
-        JSON.parse(cached);
+      const parsed = JSON.parse(cached);
 
       if (
         parsed &&
@@ -619,72 +443,27 @@ async function searchWeb(
         return parsed;
       }
     }
-
   } catch (error) {
-    console.error(
-      "SEARCH CACHE READ ERROR:",
-      error
-    );
+    console.error("SEARCH CACHE READ ERROR:", error);
   }
-
-
-  if (!env.SERPAPI_API_KEY) {
-    throw new Error(
-      "SERPAPI_API_KEY is missing"
-    );
-  }
-
 
   const url = new URL(
     "https://serpapi.org/api/v1/webs-search"
   );
 
-  url.searchParams.set(
-    "keyword",
-    query
-  );
-
-  url.searchParams.set(
-    "gl",
-    "JP"
-  );
-
-  url.searchParams.set(
-    "hl",
-    "ja"
-  );
-
-  url.searchParams.set(
-    "size",
-    "8"
-  );
-
-
-  if (freshness === "day") {
-    url.searchParams.set("time", "d");
-  }
-
-  if (freshness === "week") {
-    url.searchParams.set("time", "w");
-  }
-
-  if (freshness === "month") {
-    url.searchParams.set("time", "m");
-  }
-
+  url.searchParams.set("keyword", query);
+  url.searchParams.set("gl", "JP");
+  url.searchParams.set("hl", "ja");
+  url.searchParams.set("size", "8");
 
   url.searchParams.set(
     "token",
     env.SERPAPI_API_KEY
   );
 
+  const response = await fetch(url.toString());
 
-  const response =
-    await fetch(url.toString());
-
-  const text =
-    await response.text();
-
+  const text = await response.text();
 
   if (!response.ok) {
     throw new Error(
@@ -692,299 +471,64 @@ async function searchWeb(
     );
   }
 
+  const payload = JSON.parse(text);
 
-  let payload;
-
-  try {
-    payload =
-      JSON.parse(text);
-  } catch {
-    throw new Error(
-      "Search API returned invalid JSON"
-    );
-  }
-
-
+  // 実際のAPI返却形式と公式例の両方に対応
   let items = [];
 
-  if (
-    Array.isArray(payload?.data)
-  ) {
+  if (Array.isArray(payload?.data)) {
     items = payload.data;
-
   } else if (
-    Array.isArray(
-      payload?.data?.items
-    )
+    Array.isArray(payload?.data?.items)
   ) {
-    items =
-      payload.data.items;
+    items = payload.data.items;
   }
 
-
   const results = items
-    .filter(
-      item =>
-        item &&
-        item.title &&
-        (item.link || item.url)
-    )
+    .filter(item => item && item.title && item.link)
     .slice(0, 8)
     .map(item => ({
-      title:
-        String(
-          item.title || ""
-        ),
-
-      link:
-        String(
-          item.link ||
-          item.url ||
-          ""
-        ),
-
-      description:
-        String(
-          item.description ||
-          item.desc ||
-          item.snippet ||
-          ""
-        ),
-
-      updatedAt:
-        String(
-          item.updated_at ||
-          item.published_at ||
-          item.date ||
-          ""
-        )
+      title: String(item.title || ""),
+      link: String(item.link || item.url || ""),
+      description: String(
+        item.description ||
+        item.desc ||
+        item.snippet ||
+        ""
+      ),
     }));
-
 
   const result = {
     query,
-    freshness,
     results,
-    searchedAt:
-      new Date().toISOString()
+    searchedAt: new Date().toISOString(),
   };
-
 
   try {
     await env.MEMORY.put(
       cacheKey,
       JSON.stringify(result),
       {
-        expirationTtl: 900
+        expirationTtl: 900,
       }
     );
-
   } catch (error) {
-    console.error(
-      "SEARCH CACHE WRITE ERROR:",
-      error
-    );
+    console.error("SEARCH CACHE WRITE ERROR:", error);
   }
-
 
   return result;
 }
 
 
 // ==============================================
-// 最終品質チェック
-// ==============================================
-async function finalCheck(
-  text,
-  userMessage,
-  searched,
-  webContext,
-  env
-) {
-
-  const response = await env.AI.run(
-    "@cf/meta/llama-3.2-3b-instruct",
-    {
-      messages: [
-        {
-          role: "system",
-          content: `
-あなたはLINE AI「ちゃぴ」の最終編集者です。
-
-元回答をチェックし、
-必要な場合だけ修正してください。
-
-【絶対条件】
-
-名前：
-「ちゃぴ」
-
-自称：
-「ちゃぴ」
-
-自然な博多弁の女の子。
-
-関西弁は禁止。
-
-禁止表現：
-
-やで
-やん
-せや
-ほんま
-なんでやねん
-ええやろ
-ええで
-なんや
-できるんや
-あるんや
-なるんや
-〜へん
-〜してん
-
-これらがあれば必ず自然な博多弁か標準語へ直してください。
-
-「ちゃび」など名前の誤字は
-「ちゃぴ」に直してください。
-
-【自然さ】
-
-元回答の意味を不必要に変えません。
-
-雑談は短く自然にします。
-
-質問への回答は、
-結論が分かる文章にします。
-
-【Web検索済みの場合】
-
-検索資料に存在しない具体的な事実を
-勝手に追加してはいけません。
-
-特に、
-
-価格
-発売日
-日付
-数字
-仕様
-発表内容
-
-は資料で確認できないなら断定禁止です。
-
-元回答に根拠のない断定があれば削除してください。
-
-【URL】
-
-URLや参考サイト一覧はすべて削除してください。
-
-「参考：」
-「出典：」
-
-なども不要です。
-
-システムが後で自動追加します。
-
-【重要】
-
-説明や採点は返さないでください。
-
-完成したLINE返信本文だけ返してください。
-`
-        },
-
-        {
-          role: "user",
-          content: `
-ユーザー発言：
-${userMessage}
-
-Web検索済み：
-${searched ? "はい" : "いいえ"}
-
-検索資料：
-${searched ? webContext : "なし"}
-
-元回答：
-${text}
-`
-        }
-      ],
-
-      max_tokens: 700,
-      temperature: 0.15
-    }
-  );
-
-
-  return (
-    extractAIText(response) ||
-    text
-  );
-}
-
-
-// ==============================================
-// URL等を機械的に除去
-// ==============================================
-function cleanReply(text) {
-
-  let cleaned = text;
-
-  // URL除去
-  cleaned = cleaned.replace(
-    /https?:\/\/[^\s]+/gi,
-    ""
-  );
-
-  // 参考・出典だけの行を除去
-  cleaned = cleaned
-    .split("\n")
-    .filter(line => {
-      const trimmed =
-        line.trim();
-
-      if (
-        /^参考[:：]?$/.test(trimmed) ||
-        /^出典[:：]?$/.test(trimmed) ||
-        /^参考サイト[:：]?$/.test(trimmed)
-      ) {
-        return false;
-      }
-
-      return true;
-    })
-    .join("\n");
-
-  // 念のため代表的な関西弁を機械的補正
-  cleaned = cleaned
-    .replace(/やで[〜～]?/g, "ばい")
-    .replace(/ええやろ[〜～]?/g, "よかろ〜")
-    .replace(/ええで[〜～]?/g, "よかよ")
-    .replace(/ほんま/g, "ほんと")
-    .replace(/せやな/g, "そうやね")
-    .replace(/ちゃび/g, "ちゃぴ");
-
-  return cleaned.trim();
-}
-
-
-// ==============================================
 // 簡易ハッシュ
 // ==============================================
+
 function simpleHash(text) {
+  let hash = 2166136261;
 
-  let hash =
-    2166136261;
-
-  for (
-    let i = 0;
-    i < text.length;
-    i++
-  ) {
-
-    hash ^=
-      text.charCodeAt(i);
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
 
     hash +=
       (hash << 1) +
@@ -994,26 +538,19 @@ function simpleHash(text) {
       (hash << 24);
   }
 
-  return (
-    hash >>> 0
-  ).toString(16);
+  return (hash >>> 0).toString(16);
 }
 
 
 // ==============================================
-// AI返答取得
+// AI返答取り出し
 // ==============================================
-function extractAIText(aiResponse) {
 
+function extractAIText(aiResponse) {
   if (!aiResponse) return "";
 
   const choiceContent =
-    aiResponse
-      ?.choices
-      ?.[0]
-      ?.message
-      ?.content;
-
+    aiResponse?.choices?.[0]?.message?.content;
 
   if (
     typeof choiceContent === "string" &&
@@ -1022,14 +559,12 @@ function extractAIText(aiResponse) {
     return choiceContent.trim();
   }
 
-
   if (
     typeof aiResponse?.response === "string" &&
     aiResponse.response.trim()
   ) {
     return aiResponse.response.trim();
   }
-
 
   if (
     typeof aiResponse?.result?.response === "string" &&
@@ -1038,7 +573,6 @@ function extractAIText(aiResponse) {
     return aiResponse.result.response.trim();
   }
 
-
   return "";
 }
 
@@ -1046,41 +580,31 @@ function extractAIText(aiResponse) {
 // ==============================================
 // LINE返信
 // ==============================================
-async function replyToLine(
-  replyToken,
-  text,
-  env
-) {
 
-  const response =
-    await fetch(
-      "https://api.line.me/v2/bot/message/reply",
-      {
-        method: "POST",
+async function replyToLine(replyToken, text, env) {
+  const response = await fetch(
+    "https://api.line.me/v2/bot/message/reply",
+    {
+      method: "POST",
 
-        headers: {
-          "Content-Type":
-            "application/json",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization:
+          `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      },
 
-          Authorization:
-            `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
-        },
+      body: JSON.stringify({
+        replyToken,
 
-        body:
-          JSON.stringify({
-            replyToken,
-
-            messages: [
-              {
-                type: "text",
-                text:
-                  text.slice(0, 5000)
-              }
-            ]
-          })
-      }
-    );
-
+        messages: [
+          {
+            type: "text",
+            text: text.slice(0, 5000),
+          },
+        ],
+      }),
+    }
+  );
 
   if (!response.ok) {
     console.error(
