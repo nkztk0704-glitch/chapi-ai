@@ -2,9 +2,66 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // ==========================================
+    // ============================================================
+    // Qwen単体診断
+    // ============================================================
+
+    if (
+      request.method === "GET" &&
+      url.searchParams.get("check") === "ai"
+    ) {
+      try {
+        const testMessages = [
+          {
+            role: "system",
+            content:
+              "あなたは日本語で短く答えるアシスタントです。",
+          },
+          {
+            role: "user",
+            content:
+              "「AIテスト成功」とだけ返してください。",
+          },
+        ];
+
+        const rawResponse =
+          await env.AI.run(
+            "@cf/qwen/qwen3-30b-a3b-fp8",
+            {
+              messages: testMessages,
+              max_tokens: 80,
+              temperature: 0.1,
+              repetition_penalty: 1.1,
+            }
+          );
+
+        const extracted =
+          extractAIText(rawResponse);
+
+        return jsonResponse({
+          success: true,
+          model:
+            "@cf/qwen/qwen3-30b-a3b-fp8",
+          extracted,
+          rawResponse,
+        });
+      } catch (error) {
+        return jsonResponse({
+          success: false,
+          error:
+            String(
+              error?.stack ||
+              error?.message ||
+              error
+            ),
+        });
+      }
+    }
+
+    // ============================================================
     // Tavily単体テスト
-    // ==========================================
+    // ============================================================
+
     if (
       request.method === "GET" &&
       url.searchParams.get("check") === "tavily"
@@ -28,24 +85,31 @@ export default {
       }
     }
 
-    // ==========================================
+    // ============================================================
     // 通常アクセス
-    // ==========================================
+    // ============================================================
+
     if (request.method !== "POST") {
-      return new Response("ちゃぴAI is running!");
+      return new Response(
+        "ちゃぴAI is running!"
+      );
     }
 
     let body;
 
     try {
-      body = await request.json();
+      body =
+        await request.json();
     } catch {
       return new Response("OK");
     }
 
-    const events = body.events || [];
+    const events =
+      body.events || [];
 
-    ctx.waitUntil(handleEvents(events, env));
+    ctx.waitUntil(
+      handleEvents(events, env)
+    );
 
     return new Response("OK");
   },
@@ -56,13 +120,27 @@ export default {
 // LINEイベント処理
 // ============================================================
 
-async function handleEvents(events, env) {
+async function handleEvents(
+  events,
+  env
+) {
   for (const event of events) {
     try {
-      if (event.type !== "message") continue;
-      if (event.message?.type !== "text") continue;
+      if (
+        event.type !== "message"
+      ) {
+        continue;
+      }
 
-      const userMessage = event.message.text.trim();
+      if (
+        event.message?.type !==
+        "text"
+      ) {
+        continue;
+      }
+
+      const userMessage =
+        event.message.text.trim();
 
       const conversationId =
         event.source?.groupId ||
@@ -70,24 +148,32 @@ async function handleEvents(events, env) {
         event.source?.userId ||
         "default";
 
-      const historyKey = `history:${conversationId}`;
-      const memoryKey = `memory:${conversationId}`;
+      const historyKey =
+        `history:${conversationId}`;
 
-      // ==========================================
+      const memoryKey =
+        `memory:${conversationId}`;
+
+
+      // ============================================================
       // 会話履歴
-      // ==========================================
+      // ============================================================
 
       let history = [];
 
       try {
         const saved =
-          await env.MEMORY.get(historyKey);
+          await env.MEMORY.get(
+            historyKey
+          );
 
         if (saved) {
           const parsed =
             JSON.parse(saved);
 
-          if (Array.isArray(parsed)) {
+          if (
+            Array.isArray(parsed)
+          ) {
             history = parsed;
           }
         }
@@ -98,31 +184,42 @@ async function handleEvents(events, env) {
         );
       }
 
-      // ==========================================
+
+      // ============================================================
       // 長期記憶
-      // ==========================================
+      // ============================================================
 
       let memories = [];
 
       try {
         const saved =
-          await env.MEMORY.get(memoryKey);
+          await env.MEMORY.get(
+            memoryKey
+          );
 
         if (saved) {
           const parsed =
             JSON.parse(saved);
 
-          if (Array.isArray(parsed)) {
+          if (
+            Array.isArray(parsed)
+          ) {
             const migrated =
-              migrateAllMemories(parsed);
+              migrateAllMemories(
+                parsed
+              );
 
             memories =
               migrated.memories;
 
-            if (migrated.changed) {
+            if (
+              migrated.changed
+            ) {
               await env.MEMORY.put(
                 memoryKey,
-                JSON.stringify(memories)
+                JSON.stringify(
+                  memories
+                )
               );
             }
           }
@@ -134,17 +231,29 @@ async function handleEvents(events, env) {
         );
       }
 
-      // ==========================================
+
+      // ============================================================
       // 全記憶削除
-      // ==========================================
+      // ============================================================
 
       if (
-        userMessage.includes("全部忘れて") ||
-        userMessage.includes("記憶消して") ||
-        userMessage.includes("全部忘れろ")
+        userMessage.includes(
+          "全部忘れて"
+        ) ||
+        userMessage.includes(
+          "記憶消して"
+        ) ||
+        userMessage.includes(
+          "全部忘れろ"
+        )
       ) {
-        await env.MEMORY.delete(historyKey);
-        await env.MEMORY.delete(memoryKey);
+        await env.MEMORY.delete(
+          historyKey
+        );
+
+        await env.MEMORY.delete(
+          memoryKey
+        );
 
         await replyToLine(
           event.replyToken,
@@ -155,23 +264,36 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ==========================================
+
+      // ============================================================
       // 覚えて系
-      // ==========================================
+      // ============================================================
 
       const shouldRemember =
-        userMessage.includes("覚え") ||
-        userMessage.includes("記憶して") ||
-        userMessage.includes("忘れないで") ||
-        userMessage.includes("忘れんで");
+        userMessage.includes(
+          "覚え"
+        ) ||
+        userMessage.includes(
+          "記憶して"
+        ) ||
+        userMessage.includes(
+          "忘れないで"
+        ) ||
+        userMessage.includes(
+          "忘れんで"
+        );
 
       let newlySaved = [];
 
       if (shouldRemember) {
         newlySaved =
-          extractMemories(userMessage);
+          extractMemories(
+            userMessage
+          );
 
-        for (const item of newlySaved) {
+        for (
+          const item of newlySaved
+        ) {
           memories =
             upsertMemory(
               memories,
@@ -179,21 +301,31 @@ async function handleEvents(events, env) {
             );
         }
 
-        if (newlySaved.length === 0) {
+        if (
+          newlySaved.length === 0
+        ) {
           memories =
             upsertMemory(
               memories,
               {
-                type: "general",
+                type:
+                  "general",
+
                 key:
                   "general_" +
-                  simpleHash(userMessage),
+                  simpleHash(
+                    userMessage
+                  ),
+
                 value:
                   userMessage,
+
                 text:
                   userMessage,
+
                 savedAt:
-                  new Date().toISOString(),
+                  new Date()
+                    .toISOString(),
               }
             );
         }
@@ -203,15 +335,21 @@ async function handleEvents(events, env) {
 
         await env.MEMORY.put(
           memoryKey,
-          JSON.stringify(memories)
+          JSON.stringify(
+            memories
+          )
         );
 
         const savedReply =
-          buildSavedReply(newlySaved);
+          buildSavedReply(
+            newlySaved
+          );
 
         if (savedReply) {
           const replyText =
-            cleanReply(savedReply);
+            cleanReply(
+              savedReply
+            );
 
           await saveHistory(
             historyKey,
@@ -231,9 +369,10 @@ async function handleEvents(events, env) {
         }
       }
 
-      // ==========================================
-      // 名前・呼び方をコード側で正確に返す
-      // ==========================================
+
+      // ============================================================
+      // 名前・呼び方
+      // ============================================================
 
       const profileReply =
         buildExactProfileReply(
@@ -259,9 +398,10 @@ async function handleEvents(events, env) {
         continue;
       }
 
-      // ==========================================
-      // 好きな食べ物をコード側で正確に返す
-      // ==========================================
+
+      // ============================================================
+      // 好きな食べ物
+      // ============================================================
 
       const foodReply =
         buildExactFoodReply(
@@ -290,20 +430,29 @@ async function handleEvents(events, env) {
       history =
         history.slice(-16);
 
-      // ==========================================
+
+      // ============================================================
       // Web検索判定
-      // ==========================================
+      // ============================================================
 
       const searchDecision =
         decideWhetherToSearch(
           userMessage
         );
 
-      let searched = false;
-      let webContext = "";
-      let sourceUrls = [];
+      let searched =
+        false;
 
-      if (searchDecision.search) {
+      let webContext =
+        "";
+
+      let sourceUrls =
+        [];
+
+
+      if (
+        searchDecision.search
+      ) {
         try {
           const searchResult =
             await searchTavily(
@@ -313,14 +462,18 @@ async function handleEvents(events, env) {
             );
 
           if (
-            searchResult.results.length > 0
+            searchResult.results
+              .length > 0
           ) {
             searched = true;
 
             webContext =
               searchResult.results
                 .map(
-                  (item, index) => `
+                  (
+                    item,
+                    index
+                  ) => `
 【資料 ${index + 1}】
 
 タイトル:
@@ -336,7 +489,8 @@ ${item.content}
               searchResult.results
                 .slice(0, 3)
                 .map(
-                  item => item.url
+                  item =>
+                    item.url
                 )
                 .filter(Boolean);
           }
@@ -348,20 +502,20 @@ ${item.content}
         }
       }
 
-      // ==========================================
-      // 最大の修正ポイント
-      //
-      // Web検索時：
-      // ・個人記憶を一切渡さない
-      // ・過去の会話履歴を一切渡さない
-      //
-      // 普通の会話時だけ記憶/履歴を使用
-      // ==========================================
 
-      let memoryContext = "なし";
-      let historyForAI = [];
+      // ============================================================
+      // Web検索時は記憶・過去履歴を渡さない
+      // ============================================================
 
-      if (!searchDecision.search) {
+      let memoryContext =
+        "なし";
+
+      let historyForAI =
+        [];
+
+      if (
+        !searchDecision.search
+      ) {
         const relevant =
           selectRelevantMemories(
             userMessage,
@@ -373,7 +527,9 @@ ${item.content}
             ? relevant
                 .map(
                   item =>
-                    memoryToText(item)
+                    memoryToText(
+                      item
+                    )
                 )
                 .join("\n")
             : "なし";
@@ -382,9 +538,10 @@ ${item.content}
           history.slice(-10);
       }
 
-      // ==========================================
+
+      // ============================================================
       // システムプロンプト
-      // ==========================================
+      // ============================================================
 
       const systemPrompt = `
 あなたの名前は「ちゃぴ」。
@@ -465,10 +622,9 @@ LINEにいる、
 
 は資料に書いてあるものだけ使ってください。
 
-検索資料同士で内容が食い違う場合は、
-断定せず
-「情報が食い違っとる」
-と伝えてください。
+検索資料同士で
+内容が食い違う場合は、
+断定しないでください。
 
 検索結果がない場合は、
 
@@ -482,7 +638,8 @@ LINEにいる、
 「最新情報」を聞かれた時は、
 
 昔の発表を
-最新ニュースのように説明しないでください。
+最新ニュースのように
+説明しないでください。
 
 資料から
 最近の更新・現在の仕様・最近の発表
@@ -513,7 +670,10 @@ ${memoryContext}
 
 【Web検索状態】
 
-${searched ? "Web検索済み" : "Web検索なし"}
+${searched
+  ? "Web検索済み"
+  : "Web検索なし"
+}
 
 
 【検索資料】
@@ -521,55 +681,96 @@ ${searched ? "Web検索済み" : "Web検索なし"}
 ${webContext || "なし"}
 `;
 
+
       const messages = [
         {
-          role: "system",
-          content: systemPrompt,
+          role:
+            "system",
+
+          content:
+            systemPrompt,
         },
 
         ...historyForAI,
 
         {
-          role: "user",
-          content: userMessage,
+          role:
+            "user",
+
+          content:
+            userMessage,
         },
       ];
 
-      // ==========================================
+
+      // ============================================================
       // AI
-      // ==========================================
+      // ============================================================
 
-      const aiResponse =
-        await env.AI.run(
-          "@cf/qwen/qwen3-30b-a3b-fp8",
-          {
-            messages,
+      let aiResponse;
 
-            max_tokens:
-              searched
-                ? 450
-                : 450,
+      try {
+        aiResponse =
+          await env.AI.run(
+            "@cf/qwen/qwen3-30b-a3b-fp8",
+            {
+              messages,
 
-            temperature:
-              searched
-                ? 0.05
-                : 0.4,
+              max_tokens:
+                450,
 
-            repetition_penalty:
-              1.1,
-          }
+              temperature:
+                searched
+                  ? 0.1
+                  : 0.4,
+
+              repetition_penalty:
+                1.1,
+            }
+          );
+
+        console.log(
+          "QWEN RAW RESPONSE:",
+          JSON.stringify(
+            aiResponse
+          )
         );
 
+      } catch (error) {
+        console.error(
+          "QWEN RUN ERROR:",
+          error
+        );
+
+        aiResponse = null;
+      }
+
+
+      const extractedText =
+        extractAIText(
+          aiResponse
+        );
+
+      console.log(
+        "QWEN EXTRACTED TEXT:",
+        extractedText
+      );
+
+
       let replyText =
-        extractAIText(aiResponse) ||
+        extractedText ||
         "ごめん、今うまく返事できんかった💦";
 
-      replyText =
-        cleanReply(replyText);
 
-      // ==========================================
+      replyText =
+        cleanReply(
+          replyText
+        );
+
+
+      // ============================================================
       // 参考URL
-      // ==========================================
+      // ============================================================
 
       let lineReply =
         replyText;
@@ -579,21 +780,29 @@ ${webContext || "なし"}
         sourceUrls.length > 0
       ) {
         const uniqueUrls =
-          [...new Set(sourceUrls)];
+          [
+            ...new Set(
+              sourceUrls
+            ),
+          ];
 
         lineReply +=
           "\n\n🔎 参考\n" +
           uniqueUrls
             .map(
-              (url, i) =>
+              (
+                url,
+                i
+              ) =>
                 `${i + 1}. ${url}`
             )
             .join("\n");
       }
 
-      // ==========================================
+
+      // ============================================================
       // 履歴保存
-      // ==========================================
+      // ============================================================
 
       await saveHistory(
         historyKey,
@@ -602,6 +811,7 @@ ${webContext || "なし"}
         replyText,
         env
       );
+
 
       await replyToLine(
         event.replyToken,
@@ -623,7 +833,9 @@ ${webContext || "なし"}
 // 検索判定
 // ============================================================
 
-function decideWhetherToSearch(message) {
+function decideWhetherToSearch(
+  message
+) {
   const text =
     message.trim();
 
@@ -641,13 +853,16 @@ function decideWhetherToSearch(message) {
   if (
     memoryWords.some(
       word =>
-        text.includes(word)
+        text.includes(
+          word
+        )
     )
   ) {
     return {
       search: false,
       query: "",
-      freshness: "none",
+      freshness:
+        "none",
     };
   }
 
@@ -674,14 +889,17 @@ function decideWhetherToSearch(message) {
   const shouldSearch =
     searchWords.some(
       word =>
-        text.includes(word)
+        text.includes(
+          word
+        )
     );
 
   if (!shouldSearch) {
     return {
       search: false,
       query: "",
-      freshness: "none",
+      freshness:
+        "none",
     };
   }
 
@@ -689,15 +907,26 @@ function decideWhetherToSearch(message) {
     "none";
 
   if (
-    text.includes("今日") ||
-    text.includes("現在")
+    text.includes(
+      "今日"
+    ) ||
+    text.includes(
+      "現在"
+    )
   ) {
     freshness =
       "day";
+
   } else if (
-    text.includes("最新") ||
-    text.includes("最近") ||
-    text.includes("ニュース")
+    text.includes(
+      "最新"
+    ) ||
+    text.includes(
+      "最近"
+    ) ||
+    text.includes(
+      "ニュース"
+    )
   ) {
     freshness =
       "week";
@@ -707,7 +936,9 @@ function decideWhetherToSearch(message) {
     search: true,
 
     query:
-      cleanSearchQuery(text),
+      cleanSearchQuery(
+        text
+      ),
 
     freshness,
   };
@@ -718,7 +949,9 @@ function decideWhetherToSearch(message) {
 // 検索語
 // ============================================================
 
-function cleanSearchQuery(text) {
+function cleanSearchQuery(
+  text
+) {
   return String(text)
     .replace(
       /調べて(教えて)?/g,
@@ -729,7 +962,10 @@ function cleanSearchQuery(text) {
       ""
     )
     .trim()
-    .slice(0, 300);
+    .slice(
+      0,
+      300
+    );
 }
 
 
@@ -742,20 +978,18 @@ async function searchTavily(
   freshness,
   env
 ) {
-  if (!env.TAVILY_API_KEY) {
+  if (
+    !env.TAVILY_API_KEY
+  ) {
     throw new Error(
       "TAVILY_API_KEY が設定されていません"
     );
   }
 
   const cacheKey =
-    `tavily:v10:${simpleHash(
+    `tavily:v11:${simpleHash(
       `${query}:${freshness}`
     )}`;
-
-  // ==========================================
-  // キャッシュ
-  // ==========================================
 
   try {
     const cached =
@@ -765,7 +999,9 @@ async function searchTavily(
 
     if (cached) {
       const parsed =
-        JSON.parse(cached);
+        JSON.parse(
+          cached
+        );
 
       if (
         parsed &&
@@ -783,22 +1019,19 @@ async function searchTavily(
     );
   }
 
-  // ==========================================
-  // 質問から優先ドメインを判断
-  // ==========================================
 
   const preferredDomains =
-    detectPreferredDomains(query);
+    detectPreferredDomains(
+      query
+    );
 
-  let rawResults = [];
+  let rawResults =
+    [];
 
-  // ==========================================
-  // 優先ドメインが分かる時は
-  // まず信頼できるサイトだけ検索
-  // ==========================================
 
   if (
-    preferredDomains.length > 0
+    preferredDomains.length >
+    0
   ) {
     rawResults =
       await callTavily(
@@ -809,13 +1042,10 @@ async function searchTavily(
       );
   }
 
-  // ==========================================
-  // 公式系で結果が足りない場合だけ
-  // 一般検索も追加
-  // ==========================================
 
   if (
-    rawResults.length < 3
+    rawResults.length <
+    3
   ) {
     const general =
       await callTavily(
@@ -832,14 +1062,12 @@ async function searchTavily(
       );
   }
 
-  // ==========================================
-  // 期間指定で少ない場合は
-  // 期間なしでも補完
-  // ==========================================
 
   if (
-    rawResults.length < 3 &&
-    freshness !== "none"
+    rawResults.length <
+      3 &&
+    freshness !==
+      "none"
   ) {
     const retry =
       await callTavily(
@@ -856,51 +1084,61 @@ async function searchTavily(
       );
   }
 
-  // ==========================================
-  // 安全・品質フィルター
-  // ==========================================
 
   const results =
     rawResults
       .filter(
         item =>
-          isSafeSearchResult(item)
+          isSafeSearchResult(
+            item
+          )
       )
       .map(
         item => ({
           title:
             String(
-              item.title || ""
+              item.title ||
+              ""
             ),
 
           url:
             String(
-              item.url || ""
+              item.url ||
+              ""
             ),
 
           content:
             String(
-              item.content || ""
+              item.content ||
+              ""
             ).slice(
               0,
               1800
             ),
 
           score:
-            typeof item.score === "number"
+            typeof item.score ===
+            "number"
               ? item.score
               : 0,
 
           trust:
             trustScore(
-              item.url || "",
+              item.url ||
+                "",
               preferredDomains
             ),
 
           relevance:
             keywordOverlap(
               query,
-              `${item.title || ""} ${item.content || ""}`
+              `${
+                item.title ||
+                ""
+              } ${
+                item.content ||
+                ""
+              }`
             ),
         })
       )
@@ -908,19 +1146,25 @@ async function searchTavily(
         item =>
           item.title &&
           item.url &&
-          item.score >= 0.30 &&
-          item.relevance > 0
+          item.score >=
+            0.30 &&
+          item.relevance >
+            0
       )
       .sort(
         (a, b) => {
           const aTotal =
-            a.trust * 3 +
-            a.relevance * 2 +
+            a.trust *
+              3 +
+            a.relevance *
+              2 +
             a.score;
 
           const bTotal =
-            b.trust * 3 +
-            b.relevance * 2 +
+            b.trust *
+              3 +
+            b.relevance *
+              2 +
             b.score;
 
           return (
@@ -946,19 +1190,25 @@ async function searchTavily(
         })
       );
 
+
   const result = {
     query,
     results,
     searchedAt:
-      new Date().toISOString(),
+      new Date()
+        .toISOString(),
   };
+
 
   try {
     await env.MEMORY.put(
       cacheKey,
-      JSON.stringify(result),
+      JSON.stringify(
+        result
+      ),
       {
-        expirationTtl: 900,
+        expirationTtl:
+          900,
       }
     );
   } catch (error) {
@@ -967,6 +1217,7 @@ async function searchTavily(
       error
     );
   }
+
 
   return result;
 }
@@ -1012,28 +1263,38 @@ async function callTavily(
     ],
   };
 
+
   if (
-    Array.isArray(includeDomains) &&
-    includeDomains.length > 0
+    Array.isArray(
+      includeDomains
+    ) &&
+    includeDomains.length >
+      0
   ) {
     requestBody.include_domains =
       includeDomains;
   }
 
+
   if (
-    freshness === "day" ||
-    freshness === "week" ||
-    freshness === "month"
+    freshness ===
+      "day" ||
+    freshness ===
+      "week" ||
+    freshness ===
+      "month"
   ) {
     requestBody.time_range =
       freshness;
   }
 
+
   const response =
     await fetch(
       "https://api.tavily.com/search",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           "Content-Type":
@@ -1050,17 +1311,26 @@ async function callTavily(
       }
     );
 
+
   const text =
     await response.text();
 
-  if (!response.ok) {
+
+  if (
+    !response.ok
+  ) {
     throw new Error(
-      `Tavily ${response.status}: ${text.slice(0, 500)}`
+      `Tavily ${response.status}: ${text.slice(
+        0,
+        500
+      )}`
     );
   }
 
+
   const data =
     JSON.parse(text);
+
 
   return Array.isArray(
     data?.results
@@ -1074,10 +1344,13 @@ async function callTavily(
 // 質問ごとの信頼サイト
 // ============================================================
 
-function detectPreferredDomains(query) {
+function detectPreferredDomains(
+  query
+) {
   const text =
     String(query)
       .toLowerCase();
+
 
   if (
     text.includes(
@@ -1099,6 +1372,7 @@ function detectPreferredDomains(query) {
     ];
   }
 
+
   if (
     text.includes(
       "playstation"
@@ -1119,6 +1393,7 @@ function detectPreferredDomains(query) {
     ];
   }
 
+
   if (
     text.includes(
       "iphone"
@@ -1132,6 +1407,7 @@ function detectPreferredDomains(query) {
       "support.apple.com",
     ];
   }
+
 
   if (
     text.includes(
@@ -1151,6 +1427,7 @@ function detectPreferredDomains(query) {
     ];
   }
 
+
   return [];
 }
 
@@ -1166,11 +1443,14 @@ function trustScore(
   const domain =
     getDomain(url);
 
+
   for (
-    const preferred of preferredDomains
+    const preferred of
+      preferredDomains
   ) {
     if (
-      domain === preferred ||
+      domain ===
+        preferred ||
       domain.endsWith(
         `.${preferred}`
       )
@@ -1178,6 +1458,7 @@ function trustScore(
       return 3;
     }
   }
+
 
   const generalTrusted = [
     "nintendo.com",
@@ -1191,10 +1472,12 @@ function trustScore(
     "game8.jp",
   ];
 
+
   if (
     generalTrusted.some(
       trusted =>
-        domain === trusted ||
+        domain ===
+          trusted ||
         domain.endsWith(
           `.${trusted}`
         )
@@ -1202,6 +1485,7 @@ function trustScore(
   ) {
     return 2;
   }
+
 
   return 0;
 }
@@ -1211,11 +1495,14 @@ function trustScore(
 // 安全判定
 // ============================================================
 
-function isSafeSearchResult(item) {
+function isSafeSearchResult(
+  item
+) {
   const url =
     String(
       item?.url || ""
     ).toLowerCase();
+
 
   const blocked = [
     "xvideos.",
@@ -1228,9 +1515,12 @@ function isSafeSearchResult(item) {
     "onlyfans.",
   ];
 
+
   return !blocked.some(
     domain =>
-      url.includes(domain)
+      url.includes(
+        domain
+      )
   );
 }
 
@@ -1244,7 +1534,10 @@ function keywordOverlap(
   target
 ) {
   const words =
-    extractKeywords(query);
+    extractKeywords(
+      query
+    );
+
 
   if (
     words.length === 0
@@ -1252,13 +1545,18 @@ function keywordOverlap(
     return 1;
   }
 
+
   const normalized =
     String(target)
       .toLowerCase();
 
+
   let matched = 0;
 
-  for (const word of words) {
+
+  for (
+    const word of words
+  ) {
     if (
       normalized.includes(
         word.toLowerCase()
@@ -1268,6 +1566,7 @@ function keywordOverlap(
     }
   }
 
+
   return (
     matched /
     words.length
@@ -1275,7 +1574,9 @@ function keywordOverlap(
 }
 
 
-function extractKeywords(text) {
+function extractKeywords(
+  text
+) {
   const cleaned =
     String(text)
       .replace(
@@ -1287,6 +1588,7 @@ function extractKeywords(text) {
         " "
       );
 
+
   return cleaned
     .split(/\s+/)
     .map(
@@ -1295,9 +1597,13 @@ function extractKeywords(text) {
     )
     .filter(
       word =>
-        word.length >= 2
+        word.length >=
+        2
     )
-    .slice(0, 8);
+    .slice(
+      0,
+      8
+    );
 }
 
 
@@ -1305,9 +1611,13 @@ function extractKeywords(text) {
 // 検索結果結合
 // ============================================================
 
-function mergeResults(a, b) {
+function mergeResults(
+  a,
+  b
+) {
   const map =
     new Map();
+
 
   for (
     const item of [
@@ -1315,12 +1625,17 @@ function mergeResults(a, b) {
       ...b,
     ]
   ) {
-    if (!item?.url) {
+    if (
+      !item?.url
+    ) {
       continue;
     }
 
+
     if (
-      !map.has(item.url)
+      !map.has(
+        item.url
+      )
     ) {
       map.set(
         item.url,
@@ -1328,6 +1643,7 @@ function mergeResults(a, b) {
       );
     }
   }
+
 
   return [
     ...map.values(),
@@ -1339,76 +1655,120 @@ function mergeResults(a, b) {
 // 記憶処理
 // ============================================================
 
-function extractMemories(text) {
+function extractMemories(
+  text
+) {
   const result = [];
 
   const now =
-    new Date().toISOString();
+    new Date()
+      .toISOString();
+
 
   const name =
     text.match(
       /(?:俺|私|僕)の名前は([^、。！!？?\s]+?)(?:って|と)?覚え/
     );
 
-  if (name?.[1]) {
+
+  if (
+    name?.[1]
+  ) {
     result.push({
-      type: "profile",
-      key: "name",
+      type:
+        "profile",
+
+      key:
+        "name",
+
       value:
         cleanMemoryValue(
           name[1]
         ),
-      savedAt: now,
+
+      savedAt:
+        now,
     });
   }
+
 
   const nickname =
     text.match(
       /呼び方は([^、。！!？?\s]+?)(?:でいい|でよい|にして|って)/
     );
 
-  if (nickname?.[1]) {
+
+  if (
+    nickname?.[1]
+  ) {
     result.push({
-      type: "profile",
-      key: "nickname",
+      type:
+        "profile",
+
+      key:
+        "nickname",
+
       value:
         cleanMemoryValue(
           nickname[1]
         ),
-      savedAt: now,
+
+      savedAt:
+        now,
     });
   }
+
 
   const food =
     text.match(
       /好きな食べ物(?:は|が)([^、。！!？?\n]+?)(?:って|と)?覚え/
     );
 
-  if (food?.[1]) {
+
+  if (
+    food?.[1]
+  ) {
     result.push({
-      type: "preference",
-      key: "favorite_food",
+      type:
+        "preference",
+
+      key:
+        "favorite_food",
+
       value:
         cleanFoodValue(
           food[1]
         ),
-      savedAt: now,
+
+      savedAt:
+        now,
     });
   }
+
 
   return result;
 }
 
 
-function migrateAllMemories(raw) {
+function migrateAllMemories(
+  raw
+) {
   let result = [];
-  let changed = false;
 
-  for (const item of raw) {
+  let changed =
+    false;
+
+
+  for (
+    const item of raw
+  ) {
     if (
-      item?.key === "name" ||
-      item?.key === "nickname" ||
-      item?.key === "favorite_food"
+      item?.key ===
+        "name" ||
+      item?.key ===
+        "nickname" ||
+      item?.key ===
+        "favorite_food"
     ) {
       result =
         upsertMemory(
@@ -1419,6 +1779,7 @@ function migrateAllMemories(raw) {
       continue;
     }
 
+
     const text =
       String(
         item?.text ||
@@ -1427,20 +1788,27 @@ function migrateAllMemories(raw) {
         ""
       );
 
+
     const extracted =
-      extractMemories(text);
+      extractMemories(
+        text
+      );
+
 
     if (
-      extracted.length > 0
+      extracted.length >
+      0
     ) {
       for (
-        const converted of extracted
+        const converted of
+          extracted
       ) {
         result =
           upsertMemory(
             result,
             {
               ...converted,
+
               savedAt:
                 item?.savedAt ||
                 converted.savedAt,
@@ -1449,24 +1817,31 @@ function migrateAllMemories(raw) {
       }
 
       changed = true;
+
     } else {
       result.push({
-        type: "general",
+        type:
+          "general",
 
         key:
           item?.key ||
           "general_" +
-          simpleHash(text),
+          simpleHash(
+            text
+          ),
 
-        value: text,
+        value:
+          text,
 
         text,
 
         savedAt:
-          item?.savedAt || "",
+          item?.savedAt ||
+          "",
       });
     }
   }
+
 
   return {
     memories:
@@ -1484,41 +1859,58 @@ function upsertMemory(
   const copy =
     [...memories];
 
+
   const index =
     copy.findIndex(
       current =>
-        current.key === item.key
+        current.key ===
+        item.key
     );
 
-  if (index >= 0) {
+
+  if (
+    index >= 0
+  ) {
     copy[index] =
       item;
+
   } else {
-    copy.push(item);
+    copy.push(
+      item
+    );
   }
+
 
   return copy;
 }
 
 
-function buildSavedReply(items) {
+function buildSavedReply(
+  items
+) {
   const name =
     items.find(
       item =>
-        item.key === "name"
+        item.key ===
+        "name"
     )?.value;
+
 
   const nickname =
     items.find(
       item =>
-        item.key === "nickname"
+        item.key ===
+        "nickname"
     )?.value;
+
 
   const food =
     items.find(
       item =>
-        item.key === "favorite_food"
+        item.key ===
+        "favorite_food"
     )?.value;
+
 
   if (
     name &&
@@ -1530,11 +1922,13 @@ function buildSavedReply(items) {
     );
   }
 
+
   if (name) {
     return (
       `覚えたよ〜😊 名前は「${name}」ね！`
     );
   }
+
 
   if (nickname) {
     return (
@@ -1542,11 +1936,13 @@ function buildSavedReply(items) {
     );
   }
 
+
   if (food) {
     return (
       `覚えたよ〜😊 好きな食べ物は「${food}」ね！`
     );
   }
+
 
   return "";
 }
@@ -1557,10 +1953,16 @@ function buildExactProfileReply(
   memories
 ) {
   const asksName =
-    message.includes("名前");
+    message.includes(
+      "名前"
+    );
+
 
   const asksNickname =
-    message.includes("呼び");
+    message.includes(
+      "呼び"
+    );
+
 
   if (
     !asksName &&
@@ -1569,17 +1971,20 @@ function buildExactProfileReply(
     return "";
   }
 
+
   const name =
     getMemory(
       memories,
       "name"
     );
 
+
   const nickname =
     getMemory(
       memories,
       "nickname"
     );
+
 
   if (
     asksName &&
@@ -1596,6 +2001,7 @@ function buildExactProfileReply(
     }
   }
 
+
   if (
     asksName &&
     name
@@ -1605,6 +2011,7 @@ function buildExactProfileReply(
     );
   }
 
+
   if (
     asksNickname &&
     nickname
@@ -1613,6 +2020,7 @@ function buildExactProfileReply(
       `「${nickname}」って呼ぶよ😊`
     );
   }
+
 
   return "";
 }
@@ -1630,17 +2038,20 @@ function buildExactFoodReply(
     return "";
   }
 
+
   const food =
     getMemory(
       memories,
       "favorite_food"
     );
 
+
   if (!food) {
     return (
       "好きな食べ物はまだ記憶できとらんみたい💦"
     );
   }
+
 
   return (
     `好きな食べ物は「${food}」ばい😊 ` +
@@ -1657,20 +2068,27 @@ function getMemory(
     memories
       .filter(
         memory =>
-          memory.key === key
+          memory.key ===
+          key
       )
       .sort(
         (a, b) =>
           String(
-            b.savedAt || ""
+            b.savedAt ||
+            ""
           ).localeCompare(
             String(
-              a.savedAt || ""
+              a.savedAt ||
+              ""
             )
           )
       )[0];
 
-  return item?.value || "";
+
+  return (
+    item?.value ||
+    ""
+  );
 }
 
 
@@ -1679,54 +2097,75 @@ function selectRelevantMemories(
   memories
 ) {
   if (
-    message.includes("名前") ||
-    message.includes("呼び")
+    message.includes(
+      "名前"
+    ) ||
+    message.includes(
+      "呼び"
+    )
   ) {
     return memories.filter(
       item =>
-        item.key === "name" ||
-        item.key === "nickname"
+        item.key ===
+          "name" ||
+        item.key ===
+          "nickname"
     );
   }
 
+
   if (
-    message.includes("食べ物") ||
-    message.includes("カレー")
+    message.includes(
+      "食べ物"
+    ) ||
+    message.includes(
+      "カレー"
+    )
   ) {
     return memories.filter(
       item =>
-        item.key === "favorite_food"
+        item.key ===
+        "favorite_food"
     );
   }
+
 
   return [];
 }
 
 
-function memoryToText(item) {
+function memoryToText(
+  item
+) {
   if (
-    item.key === "name"
+    item.key ===
+    "name"
   ) {
     return (
       `名前: ${item.value}`
     );
   }
 
+
   if (
-    item.key === "nickname"
+    item.key ===
+    "nickname"
   ) {
     return (
       `呼び方: ${item.value}`
     );
   }
 
+
   if (
-    item.key === "favorite_food"
+    item.key ===
+    "favorite_food"
   ) {
     return (
       `好きな食べ物: ${item.value}`
     );
   }
+
 
   return (
     item.text ||
@@ -1736,8 +2175,12 @@ function memoryToText(item) {
 }
 
 
-function cleanMemoryValue(value) {
-  return String(value || "")
+function cleanMemoryValue(
+  value
+) {
+  return String(
+    value || ""
+  )
     .replace(
       /って.*$/g,
       ""
@@ -1754,8 +2197,12 @@ function cleanMemoryValue(value) {
 }
 
 
-function cleanFoodValue(value) {
-  return String(value || "")
+function cleanFoodValue(
+  value
+) {
+  return String(
+    value || ""
+  )
     .replace(
       /って.*$/g,
       ""
@@ -1772,8 +2219,12 @@ function cleanFoodValue(value) {
 // 回答整形
 // ============================================================
 
-function cleanReply(text) {
-  return String(text || "")
+function cleanReply(
+  text
+) {
+  return String(
+    text || ""
+  )
     .replace(
       /\*\*/g,
       ""
@@ -1837,29 +2288,48 @@ async function saveHistory(
     ...history,
 
     {
-      role: "user",
-      content: userMessage,
+      role:
+        "user",
+
+      content:
+        userMessage,
     },
 
     {
-      role: "assistant",
-      content: replyText,
+      role:
+        "assistant",
+
+      content:
+        replyText,
     },
 
   ].slice(-16);
 
+
   await env.MEMORY.put(
     historyKey,
-    JSON.stringify(updated)
+    JSON.stringify(
+      updated
+    )
   );
 }
 
 
-function extractAIText(aiResponse) {
-  if (!aiResponse) {
+// ============================================================
+// AI返答取り出し
+// ============================================================
+
+function extractAIText(
+  aiResponse
+) {
+  if (
+    !aiResponse
+  ) {
     return "";
   }
 
+
+  // Cloudflare / OpenAI互換
   const choice =
     aiResponse
       ?.choices
@@ -1867,26 +2337,43 @@ function extractAIText(aiResponse) {
       ?.message
       ?.content;
 
+
   if (
-    typeof choice === "string" &&
+    typeof choice ===
+      "string" &&
     choice.trim()
   ) {
     return choice.trim();
   }
 
+
+  // 一部Workers AI形式
   if (
-    typeof aiResponse?.response ===
-      "string"
+    typeof aiResponse
+      ?.response ===
+      "string" &&
+    aiResponse
+      .response
+      .trim()
   ) {
     return (
-      aiResponse.response.trim()
+      aiResponse
+        .response
+        .trim()
     );
   }
 
+
+  // result.response形式
   if (
     typeof aiResponse
       ?.result
-      ?.response === "string"
+      ?.response ===
+      "string" &&
+    aiResponse
+      .result
+      .response
+      .trim()
   ) {
     return (
       aiResponse
@@ -1896,15 +2383,71 @@ function extractAIText(aiResponse) {
     );
   }
 
+
+  // 万一 message.content が配列
+  const arrayContent =
+    aiResponse
+      ?.choices
+      ?.[0]
+      ?.message
+      ?.content;
+
+
+  if (
+    Array.isArray(
+      arrayContent
+    )
+  ) {
+    const combined =
+      arrayContent
+        .map(
+          item => {
+            if (
+              typeof item ===
+              "string"
+            ) {
+              return item;
+            }
+
+            if (
+              typeof item?.text ===
+              "string"
+            ) {
+              return item.text;
+            }
+
+            if (
+              typeof item?.content ===
+              "string"
+            ) {
+              return item.content;
+            }
+
+            return "";
+          }
+        )
+        .join("")
+        .trim();
+
+
+    if (combined) {
+      return combined;
+    }
+  }
+
+
   return "";
 }
 
 
 function getDomain(url) {
   try {
-    return new URL(url)
+    return new URL(
+      url
+    )
       .hostname
       .toLowerCase();
+
   } catch {
     return "";
   }
@@ -1915,13 +2458,17 @@ function simpleHash(text) {
   let hash =
     2166136261;
 
+
   for (
     let i = 0;
     i < text.length;
     i++
   ) {
     hash ^=
-      text.charCodeAt(i);
+      text.charCodeAt(
+        i
+      );
+
 
     hash +=
       (hash << 1) +
@@ -1930,6 +2477,7 @@ function simpleHash(text) {
       (hash << 8) +
       (hash << 24);
   }
+
 
   return (
     hash >>> 0
@@ -1946,7 +2494,8 @@ async function replyToLine(
     await fetch(
       "https://api.line.me/v2/bot/message/reply",
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           "Content-Type":
@@ -1962,7 +2511,8 @@ async function replyToLine(
 
             messages: [
               {
-                type: "text",
+                type:
+                  "text",
 
                 text:
                   text.slice(
@@ -1975,7 +2525,10 @@ async function replyToLine(
       }
     );
 
-  if (!response.ok) {
+
+  if (
+    !response.ok
+  ) {
     console.error(
       "LINE REPLY ERROR:",
       response.status,
