@@ -2,9 +2,18 @@
   "name": "chapi-ai",
   "main": "src/index.js",
   "compatibility_date": "2026-08-12",
+
   "ai": {
     "binding": "AI"
   },
+
+  "kv_namespaces": [
+    {
+      "binding": "MEMORY",
+      "id": "cc02c4ffbaf34f359ec70076b87c61fe"
+    }
+  ],
+
   "observability": {
     "enabled": true,
     "logs": {
