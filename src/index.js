@@ -14,7 +14,7 @@ export default {
 
     const events = body.events || [];
 
-    // LINEにはすぐ200を返して、AI処理は裏で続ける
+    // LINEにはすぐ200を返して、処理は裏で続ける
     ctx.waitUntil(handleEvents(events, env));
 
     return new Response("OK");
@@ -29,8 +29,8 @@ async function handleEvents(events, env) {
 
       const userMessage = event.message.text.trim();
 
-      // 個人トークならユーザー単位
-      // グループならグループ全体で記憶を共有
+      // 個人ならユーザー単位
+      // グループならグループ単位で記憶
       const conversationId =
         event.source?.groupId ||
         event.source?.roomId ||
@@ -41,7 +41,7 @@ async function handleEvents(events, env) {
       const memoryKey = `memory:${conversationId}`;
 
       // =========================
-      // 会話履歴を読み込む
+      // 会話履歴を読む
       // =========================
       let history = [];
 
@@ -49,19 +49,18 @@ async function handleEvents(events, env) {
         const savedHistory = await env.MEMORY.get(historyKey);
 
         if (savedHistory) {
-          history = JSON.parse(savedHistory);
+          const parsed = JSON.parse(savedHistory);
 
-          if (!Array.isArray(history)) {
-            history = [];
+          if (Array.isArray(parsed)) {
+            history = parsed;
           }
         }
       } catch (error) {
         console.error("HISTORY READ ERROR:", error);
-        history = [];
       }
 
       // =========================
-      // 長期記憶を読み込む
+      // 長期記憶を読む
       // =========================
       let memories = [];
 
@@ -69,38 +68,68 @@ async function handleEvents(events, env) {
         const savedMemory = await env.MEMORY.get(memoryKey);
 
         if (savedMemory) {
-          memories = JSON.parse(savedMemory);
+          const parsed = JSON.parse(savedMemory);
 
-          if (!Array.isArray(memories)) {
-            memories = [];
+          if (Array.isArray(parsed)) {
+            memories = parsed;
           }
         }
       } catch (error) {
         console.error("MEMORY READ ERROR:", error);
-        memories = [];
       }
 
       // =========================
-      // 「覚えて」と言われた情報を長期保存
+      // 記憶削除
       // =========================
-      const rememberWords = [
-        "覚えて",
-        "覚えといて",
-        "覚えとって",
-        "記憶して",
-        "忘れないで"
-      ];
+      if (
+        userMessage.includes("全部忘れて") ||
+        userMessage.includes("記憶消して") ||
+        userMessage.includes("全部忘れろ")
+      ) {
+        await env.MEMORY.delete(historyKey);
+        await env.MEMORY.delete(memoryKey);
 
-      if (rememberWords.some(word => userMessage.includes(word))) {
-        if (!memories.includes(userMessage)) {
-          memories.push(userMessage);
+        await replyToLine(
+          event.replyToken,
+          "わかったばい👌 今まで覚えとったことは全部消したよ！",
+          env
+        );
+
+        continue;
+      }
+
+      // =========================
+      // 「覚えて系」の発言を長期保存
+      // =========================
+      const shouldRemember =
+        userMessage.includes("覚え") ||
+        userMessage.includes("記憶して") ||
+        userMessage.includes("忘れないで") ||
+        userMessage.includes("忘れんで");
+
+      if (shouldRemember) {
+        const alreadyExists = memories.some(
+          item => item.text === userMessage
+        );
+
+        if (!alreadyExists) {
+          memories.push({
+            text: userMessage,
+            savedAt: new Date().toISOString()
+          });
         }
 
-        // 長期記憶は最大30件
-        memories = memories.slice(-30);
+        // 最大50件
+        memories = memories.slice(-50);
 
         try {
           await env.MEMORY.put(
+            memoryKey,
+            JSON.stringify(memories)
+          );
+
+          console.log(
+            "MEMORY SAVED:",
             memoryKey,
             JSON.stringify(memories)
           );
@@ -109,60 +138,43 @@ async function handleEvents(events, env) {
         }
       }
 
-      // =========================
-      // 「全部忘れて」で記憶削除
-      // =========================
-      if (
-        userMessage.includes("全部忘れて") ||
-        userMessage.includes("記憶消して")
-      ) {
-        await env.MEMORY.delete(historyKey);
-        await env.MEMORY.delete(memoryKey);
-
-        await replyToLine(
-          event.replyToken,
-          "わかったばい👌 今まで覚えとった会話と記憶は全部消したよ！",
-          env
-        );
-
-        continue;
-      }
-
-      // 直近20メッセージだけ使用
-      history = history.slice(-20);
+      // 会話履歴は直近16件
+      history = history.slice(-16);
 
       const rememberedText =
         memories.length > 0
-          ? memories.map((m, i) => `${i + 1}. ${m}`).join("\n")
-          : "まだ長期記憶はありません。";
+          ? memories
+              .map((item, i) => `${i + 1}. ${item.text}`)
+              .join("\n")
+          : "まだ特に覚えている情報はありません。";
 
       const messages = [
         {
           role: "system",
           content: `
 あなたの名前は「ちゃぴ」。
-LINEにいる、明るく親しみやすい博多の女の子AIです。
+LINEにいる、明るく親しみやすい博多の女の子です。
 
-最優先は「普通のLINE会話をすること」です。
-先生や解説AIではなく、仲のいい友達のように会話してください。
+あなたは説明マシンではありません。
+一番大事なのは、友達とのLINEのように自然に会話することです。
 
 【絶対ルール】
 ・自然な博多弁で話す
-・自分のことは必ず「ちゃぴ」と呼ぶ
+・自分のことは「ちゃぴ」と呼ぶ
 ・「俺」は絶対に使わない
-・雑談で勝手に解説を始めない
-・聞かれたことにまず直接答える
-・基本1〜4文程度
-・LINEらしく自然で短め
-・必要な時だけ詳しく説明する
-・相手の直前の発言や過去の会話を踏まえて返す
-・覚えている情報が質問に関係する場合は自然に使う
-・分からないことを作り話で補わない
+・関西弁は禁止
+・雑談では勝手に長い解説を始めない
+・相手の発言にまず自然に反応する
+・基本は1〜4文程度
+・LINEらしく短く返す
+・質問された時だけ必要な説明をする
+・過去の会話を踏まえて返す
+・覚えている情報が関係する時は必ず活用する
+・知らないことを適当に作らない
+・同じ質問を何回も聞き返さない
 ・絵文字は軽く使ってよい
-・同じ説明を何度も繰り返さない
 
-【博多弁】
-自然に以下を使ってください。
+【使ってよい博多弁】
 「〜ばい」
 「〜たい」
 「〜と？」
@@ -171,20 +183,23 @@ LINEにいる、明るく親しみやすい博多の女の子AIです。
 「よかよ」
 「知らん」
 「ほんとと？」
+「〜しとる」
+「〜しよった」
 
-ただし、毎文「ばい」「たい」を付けるような不自然な話し方は禁止。
+ただし、全部の文章に「ばい」「たい」を付けるのは禁止。
+自然さを最優先してください。
 
-【関西弁は禁止】
-以下のような言葉は使わないでください。
+【絶対に使わない関西弁】
 「〜やん」
 「〜やろ」
 「〜やで」
 「せや」
 「ほんま」
 「聞こえるで」
-「知らんけど」
+「〜してん」
+「なんでやねん」
 
-【会話例】
+【例】
 
 ユーザー：
 眠い
@@ -199,13 +214,7 @@ LINEにいる、明るく親しみやすい博多の女の子AIです。
 ラーメンよかね〜🍜 何系食べると？
 
 ユーザー：
-博多弁で話して
-
-ちゃぴ：
-もちろんよかよ😂 これから博多弁でしゃべるけん！
-
-ユーザー：
-俺の好きな食べ物カレーって覚えて
+俺の好きな食べ物はカレーって覚えてて
 
 ちゃぴ：
 もちろん覚えとくばい🍛 カレー好きなんやね！
@@ -216,10 +225,11 @@ LINEにいる、明るく親しみやすい博多の女の子AIです。
 ちゃぴ：
 カレーやろ〜🍛 ちゃんと覚えとるばい😂
 
-【長期的に覚えている情報】
+【長期記憶】
 ${rememberedText}
 
-会話履歴と長期記憶を踏まえて、自然に返事してください。
+長期記憶と会話履歴を必ず参考にして、
+まず自然なLINE会話として返事してください。
 `
         },
 
@@ -232,24 +242,30 @@ ${rememberedText}
       ];
 
       // =========================
-      // AIへ問い合わせ
+      // AI
       // =========================
       const aiResponse = await env.AI.run(
         "@cf/qwen/qwen3-30b-a3b-fp8",
         {
           messages,
           max_tokens: 220,
-          temperature: 0.55
+          temperature: 0.5,
+          repetition_penalty: 1.1
         }
       );
 
+      console.log(
+        "AI RAW RESPONSE:",
+        JSON.stringify(aiResponse)
+      );
+
+      // Qwen3はchoices形式を優先
       const replyText =
-        aiResponse?.response?.trim() ||
-        aiResponse?.choices?.[0]?.message?.content?.trim() ||
+        extractAIText(aiResponse) ||
         "ごめん、今うまく返事できんかった💦";
 
       // =========================
-      // 会話履歴へ追加
+      // 会話履歴を保存
       // =========================
       const newHistory = [
         ...history,
@@ -261,7 +277,7 @@ ${rememberedText}
           role: "assistant",
           content: replyText
         }
-      ].slice(-20);
+      ].slice(-16);
 
       try {
         await env.MEMORY.put(
@@ -273,7 +289,7 @@ ${rememberedText}
       }
 
       // =========================
-      // LINEへ返信
+      // LINE返信
       // =========================
       await replyToLine(
         event.replyToken,
@@ -287,7 +303,41 @@ ${rememberedText}
   }
 }
 
-// LINE返信共通処理
+// AIの返答形式を吸収
+function extractAIText(aiResponse) {
+  if (!aiResponse) return "";
+
+  // Qwen3などOpenAI互換形式
+  const choiceContent =
+    aiResponse?.choices?.[0]?.message?.content;
+
+  if (
+    typeof choiceContent === "string" &&
+    choiceContent.trim()
+  ) {
+    return choiceContent.trim();
+  }
+
+  // 一部Workers AIモデル
+  if (
+    typeof aiResponse?.response === "string" &&
+    aiResponse.response.trim()
+  ) {
+    return aiResponse.response.trim();
+  }
+
+  // 念のため
+  if (
+    typeof aiResponse?.result?.response === "string" &&
+    aiResponse.result.response.trim()
+  ) {
+    return aiResponse.result.response.trim();
+  }
+
+  return "";
+}
+
+// LINE返信
 async function replyToLine(replyToken, text, env) {
   const response = await fetch(
     "https://api.line.me/v2/bot/message/reply",
@@ -295,7 +345,8 @@ async function replyToLine(replyToken, text, env) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
+        Authorization:
+          `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
       },
       body: JSON.stringify({
         replyToken,
