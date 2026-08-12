@@ -22,7 +22,7 @@ export default {
 
           searchUrl.searchParams.set(
             "keyword",
-            "ダダサバイバー 最新情報"
+            "Nintendo Switch 2"
           );
 
           searchUrl.searchParams.set("gl", "JP");
@@ -61,13 +61,9 @@ export default {
             });
           }
 
-          // ======================================
-          // 今回はAPIの返答構造を確認するため
-          // 加工せずそのまま表示
-          // ======================================
           return jsonResponse({
             success: true,
-            query: "ダダサバイバー 最新情報",
+            query: "Nintendo Switch 2",
             httpStatus: response.status,
             rawApiResponse: data
           });
@@ -97,7 +93,6 @@ export default {
 
     const events = body.events || [];
 
-    // LINEにはすぐ200を返して、処理は裏で続ける
     ctx.waitUntil(handleEvents(events, env));
 
     return new Response("OK");
@@ -117,8 +112,6 @@ async function handleEvents(events, env) {
       const userMessage =
         event.message.text.trim();
 
-      // 個人ならユーザー単位
-      // グループならグループ単位で記憶
       const conversationId =
         event.source?.groupId ||
         event.source?.roomId ||
@@ -250,7 +243,6 @@ async function handleEvents(events, env) {
         }
 
 
-        // 最大50件
         memories =
           memories.slice(-50);
 
@@ -280,10 +272,6 @@ async function handleEvents(events, env) {
       }
 
 
-      // ==========================================
-      // 会話履歴は直近16件
-      // ==========================================
-
       history =
         history.slice(-16);
 
@@ -298,10 +286,6 @@ async function handleEvents(events, env) {
               .join("\n")
           : "まだ特に覚えている情報はありません。";
 
-
-      // ==========================================
-      // AIへ渡す会話
-      // ==========================================
 
       const messages = [
 
@@ -321,27 +305,16 @@ LINEにいる、明るく親しみやすい博多の女の子です。
 ・自分のことは「ちゃぴ」と呼ぶ
 ・「俺」は絶対に使わない
 ・関西弁は禁止
-
 ・雑談では勝手に長い解説を始めない
-
 ・相手の発言にまず自然に反応する
-
 ・基本は1〜4文程度
-
 ・LINEらしく短く返す
-
 ・質問された時だけ必要な説明をする
-
 ・過去の会話を踏まえて返す
-
 ・覚えている情報が関係する時は必ず活用する
-
 ・知らないことを適当に作らない
-
 ・同じ質問を何回も聞き返さない
-
 ・絵文字は軽く使ってよい
-
 
 【使ってよい博多弁】
 
