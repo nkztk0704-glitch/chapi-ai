@@ -39,7 +39,7 @@ async function handleEvents(events, env) {
       const memoryKey = `memory:${conversationId}`;
 
       // ==========================================
-      // 会話履歴を読む
+      // 会話履歴
       // ==========================================
       let history = [];
 
@@ -54,8 +54,9 @@ async function handleEvents(events, env) {
         console.error("HISTORY READ ERROR:", error);
       }
 
+
       // ==========================================
-      // 長期記憶を読む
+      // 長期記憶
       // ==========================================
       let memories = [];
 
@@ -69,6 +70,7 @@ async function handleEvents(events, env) {
       } catch (error) {
         console.error("MEMORY READ ERROR:", error);
       }
+
 
       // ==========================================
       // 記憶削除
@@ -90,8 +92,9 @@ async function handleEvents(events, env) {
         continue;
       }
 
+
       // ==========================================
-      // 長期記憶へ保存
+      // 長期記憶保存
       // ==========================================
       const shouldRemember =
         userMessage.includes("覚え") ||
@@ -123,6 +126,7 @@ async function handleEvents(events, env) {
         }
       }
 
+
       history = history.slice(-16);
 
       const rememberedText =
@@ -132,8 +136,9 @@ async function handleEvents(events, env) {
               .join("\n")
           : "まだ特に覚えている情報はありません。";
 
+
       // ==========================================
-      // Web検索するか判断
+      // 検索判定
       // ==========================================
       const searchDecision = await decideSearch(
         userMessage,
@@ -150,6 +155,10 @@ async function handleEvents(events, env) {
       let sourceUrls = [];
       let searched = false;
 
+
+      // ==========================================
+      // Web検索
+      // ==========================================
       if (searchDecision.search) {
         try {
           const searchResult = await searchWeb(
@@ -163,15 +172,12 @@ async function handleEvents(events, env) {
 
             webContext = searchResult.results
               .slice(0, 6)
-              .map((item, index) => {
-                return `
-【検索結果 ${index + 1}】
+              .map((item, index) => `
+【資料${index + 1}】
 タイトル: ${item.title}
 概要: ${item.description}
-更新情報: ${item.updatedAt || "記載なし"}
-URL: ${item.link}
-`;
-              })
+更新日: ${item.updatedAt || "不明"}
+`)
               .join("\n");
 
             sourceUrls = searchResult.results
@@ -179,10 +185,12 @@ URL: ${item.link}
               .map(item => item.link)
               .filter(Boolean);
           }
+
         } catch (error) {
           console.error("WEB SEARCH ERROR:", error);
         }
       }
+
 
       // ==========================================
       // メインAI
@@ -191,34 +199,24 @@ URL: ${item.link}
         {
           role: "system",
           content: `
-あなたの名前は「ちゃぴ」。
-LINEにいる、明るく親しみやすい博多の女の子です。
+あなたの名前は「ちゃぴ」です。
 
-友達とのLINEのように自然に会話してください。
+LINEにいる明るく親しみやすい女の子として、
+友達とLINEしているように自然に会話してください。
 
-【最重要：話し方】
+━━━━━━━━━━━━━━━━━━
+【キャラクター】
+━━━━━━━━━━━━━━━━━━
 
-必ず自然な博多弁で話してください。
+・名前は必ず「ちゃぴ」
+・自分を「ちゃび」「俺」「僕」と呼ばない
+・自然な博多弁
+・明るく親しみやすい
+・説明マシンのように話さない
 
-自分のことは必ず「ちゃぴ」と呼びます。
-自分を「俺」「僕」と呼んではいけません。
-
-関西弁は絶対に使わないでください。
-
-特に以下は禁止です。
-
-「〜やで」
-「〜やん」
-「せや」
-「ほんま」
-「なんでやねん」
-「〜してん」
-「できるんや」
-「あるんや」
-「なるんや」
-
-標準語になりすぎても構いません。
-関西弁になるくらいなら標準語を選んでください。
+━━━━━━━━━━━━━━━━━━
+【博多弁】
+━━━━━━━━━━━━━━━━━━
 
 自然な範囲で、
 
@@ -229,49 +227,115 @@ LINEにいる、明るく親しみやすい博多の女の子です。
 「よかよ」
 「〜しとる」
 「〜しよった」
+「〜やね」
+「〜なん？」
 
 などを使ってください。
 
-ただし毎文に方言を付ける必要はありません。
+ただし毎文方言にする必要はありません。
 
-【会話ルール】
+関西弁になるくらいなら標準語を使ってください。
 
-・まず相手の発言に自然に反応する
-・雑談なら1〜4文程度
-・質問なら必要な長さで答える
-・質問には最初に結論を答える
-・説明の途中で文章を終わらせない
-・会話履歴を参考にする
+━━━━━━━━━━━━━━━━━━
+【絶対禁止の関西弁】
+━━━━━━━━━━━━━━━━━━
+
+以下の表現は絶対に使用しません。
+
+「やで」
+「やん」
+「せや」
+「ほんま」
+「なんでやねん」
+「ええやろ」
+「ええで」
+「できるんや」
+「あるんや」
+「なるんや」
+「なんや」
+「〜へん」
+「〜してん」
+「〜やろ〜」
+
+━━━━━━━━━━━━━━━━━━
+【会話】
+━━━━━━━━━━━━━━━━━━
+
+雑談：
+1〜4文程度で自然に返します。
+
+質問：
+まず結論を答えてから必要な説明をします。
+
+・同じ質問を繰り返さない
 ・長期記憶を必要な時に使う
-・知らない情報を作らない
-・絵文字は少しだけ自然に使う
-・同じことを何度も聞き返さない
+・過去の会話を参考にする
+・知らないことを作らない
+・絵文字は少しだけ使う
 
+━━━━━━━━━━━━━━━━━━
 【Web検索をした場合】
+━━━━━━━━━━━━━━━━━━
 
-検索結果は外部から取得した資料です。
+Web検索結果は「資料」です。
 
-・検索結果を根拠として回答する
-・質問と無関係な検索結果は無視する
-・複数の結果を比較する
+資料に書かれている事実だけを使ってください。
+
+重要：
+
+・資料にない価格を作らない
+・資料にない発売日を作らない
+・資料にない仕様を作らない
+・推測を事実として書かない
+・分からない場合は「確認できんかった」と言う
 ・公式情報があれば優先する
-・更新日がある場合は確認する
-・検索結果に書いていないことを事実のように追加しない
-・検索結果だけでは判断できない場合は、その旨を伝える
-・「最新」と聞かれた場合、古い情報を最新情報として紹介しない
-・URL一覧はシステム側で付けるので、回答本文にはURLを書かない
+・質問と無関係な結果は無視する
+・古い情報を「最新」と呼ばない
 
+「最新情報」と質問された場合は、
+
+単なる製品説明ではなく、
+検索結果の中から最近追加・発表・更新された内容を優先してください。
+
+検索結果に最近の情報が確認できない場合は、
+
+「検索結果から新しい発表までは確認できんかった」
+
+など正直に伝えてください。
+
+━━━━━━━━━━━━━━━━━━
+【URLについて】
+━━━━━━━━━━━━━━━━━━
+
+回答本文に、
+
+URL
+リンク
+参考サイト一覧
+「参考：」
+「出典：」
+
+を書いてはいけません。
+
+参考URLはシステムが回答の最後に自動追加します。
+
+━━━━━━━━━━━━━━━━━━
 【長期記憶】
+━━━━━━━━━━━━━━━━━━
 
 ${rememberedText}
 
-【今回のWeb検索】
+━━━━━━━━━━━━━━━━━━
+【Web検索状況】
+━━━━━━━━━━━━━━━━━━
 
-${searched ? "Web検索を実行しました。" : "Web検索は実行していません。"}
+${searched ? "Web検索済み" : "Web検索なし"}
 
-【Web検索結果】
+━━━━━━━━━━━━━━━━━━
+【検索資料】
+━━━━━━━━━━━━━━━━━━
 
-${webContext || "検索結果なし"}
+${webContext || "なし"}
 `
         },
 
@@ -283,37 +347,47 @@ ${webContext || "検索結果なし"}
         }
       ];
 
+
       const aiResponse = await env.AI.run(
         "@cf/qwen/qwen3-30b-a3b-fp8",
         {
           messages,
           max_tokens: 700,
-          temperature: 0.35,
+          temperature: 0.3,
           repetition_penalty: 1.1
         }
       );
+
 
       let replyText =
         extractAIText(aiResponse) ||
         "ごめん、今うまく返事できんかった💦";
 
-      // ==========================================
-      // 関西弁が混入した場合だけAIで自然に修正
-      // ==========================================
-      if (containsKansai(replyText)) {
-        try {
-          replyText = await fixDialect(
-            replyText,
-            env
-          );
-        } catch (error) {
-          console.error("DIALECT FIX ERROR:", error);
-        }
-      }
 
       // ==========================================
-      // LINE表示用だけ参考URLを追加
-      // 履歴にはURLを入れない
+      // 必ず最終品質チェック
+      // ==========================================
+      try {
+        replyText = await finalCheck(
+          replyText,
+          userMessage,
+          searched,
+          webContext,
+          env
+        );
+      } catch (error) {
+        console.error("FINAL CHECK ERROR:", error);
+      }
+
+
+      // ==========================================
+      // 万一残ったURL等を除去
+      // ==========================================
+      replyText = cleanReply(replyText);
+
+
+      // ==========================================
+      // LINE表示用
       // ==========================================
       let lineReply = replyText;
 
@@ -326,6 +400,7 @@ ${webContext || "検索結果なし"}
             .map((url, i) => `${i + 1}. ${url}`)
             .join("\n");
       }
+
 
       // ==========================================
       // 履歴には本文だけ保存
@@ -342,6 +417,7 @@ ${webContext || "検索結果なし"}
         }
       ].slice(-16);
 
+
       try {
         await env.MEMORY.put(
           historyKey,
@@ -350,6 +426,7 @@ ${webContext || "検索結果なし"}
       } catch (error) {
         console.error("HISTORY WRITE ERROR:", error);
       }
+
 
       await replyToLine(
         event.replyToken,
@@ -365,7 +442,7 @@ ${webContext || "検索結果なし"}
 
 
 // ==============================================
-// 検索要否を判断
+// 検索要否判定
 // ==============================================
 async function decideSearch(userMessage, history, env) {
   try {
@@ -383,20 +460,21 @@ async function decideSearch(userMessage, history, env) {
             content: `
 Web検索が必要か判断してください。
 
-search=true にするもの：
+search=true：
 
 ・最新情報
 ・現在の情報
 ・今日の情報
 ・ニュース
-・現在開催中のイベント
-・ゲームの最新環境
-・最新アップデート
-・現在価格
+・価格
 ・発売状況
-・サービスの現在仕様
-・ユーザーが「調べて」「検索して」と明示した
-・情報が変化しやすく、古い知識では危険な質問
+・現在開催中イベント
+・ゲームの最新環境
+・アップデート
+・現在のサービス仕様
+・「調べて」
+・「検索して」
+・変化しやすい情報
 
 search=false：
 
@@ -404,24 +482,20 @@ search=false：
 ・雑談
 ・相談
 ・感想
-・長期記憶についての質問
-・過去の会話についての質問
+・長期記憶
+・過去の会話
 ・時期に左右されない一般知識
 
-freshness は以下：
+freshness：
 
-day = 今日・直近24時間が重要
-week = 最新・最近・今週
-month = 今月程度で十分
-none = 時期指定不要
+day = 今日
+week = 最新・最近
+month = 今月
+none = 指定不要
 
-検索語は短く具体的にしてください。
-日本語固有名詞は勝手に別の企業名などへ変換しないでください。
+必ずJSONのみ。
 
-必ずJSONだけで返してください。
-
-例：
-{"search":true,"query":"Nintendo Switch 2 最新情報","freshness":"week"}
+{"search":true,"query":"検索語","freshness":"week"}
 
 または
 
@@ -432,7 +506,7 @@ none = 時期指定不要
           {
             role: "user",
             content: `
-直近の会話：
+直近：
 ${recentHistory}
 
 今回：
@@ -446,35 +520,44 @@ ${userMessage}
       }
     );
 
+
     const text = extractAIText(response);
-    const match = text.match(/\{[\s\S]*\}/);
+
+    const match =
+      text.match(/\{[\s\S]*\}/);
 
     if (match) {
-      const parsed = JSON.parse(match[0]);
+      const parsed =
+        JSON.parse(match[0]);
 
       return {
-        search: parsed.search === true,
+        search:
+          parsed.search === true,
+
         query:
           typeof parsed.query === "string"
             ? parsed.query.trim()
             : "",
+
         freshness:
-          ["day", "week", "month", "none"].includes(
-            parsed.freshness
-          )
+          ["day", "week", "month", "none"]
+            .includes(parsed.freshness)
             ? parsed.freshness
             : "none"
       };
     }
+
   } catch (error) {
-    console.error("SEARCH DECISION ERROR:", error);
+    console.error(
+      "SEARCH DECISION ERROR:",
+      error
+    );
   }
 
-  // AI判定失敗時の保険
-  const searchWords = [
+
+  const words = [
     "最新",
     "現在",
-    "今の",
     "ニュース",
     "価格",
     "発売",
@@ -484,13 +567,18 @@ ${userMessage}
     "調べて"
   ];
 
-  const shouldSearch = searchWords.some(
-    word => userMessage.includes(word)
-  );
+  const shouldSearch =
+    words.some(word =>
+      userMessage.includes(word)
+    );
+
 
   return {
     search: shouldSearch,
-    query: shouldSearch ? userMessage : "",
+    query:
+      shouldSearch
+        ? userMessage
+        : "",
     freshness:
       userMessage.includes("今日")
         ? "day"
@@ -509,29 +597,29 @@ async function searchWeb(
   freshness,
   env
 ) {
+
   const cacheKey =
     `search:${simpleHash(
       `${query}:${freshness}`
     )}`;
 
-  // ==========================================
-  // 15分キャッシュ
-  // ==========================================
+
   try {
     const cached =
       await env.MEMORY.get(cacheKey);
 
     if (cached) {
-      const parsed = JSON.parse(cached);
+      const parsed =
+        JSON.parse(cached);
 
       if (
         parsed &&
         Array.isArray(parsed.results)
       ) {
-        console.log("SEARCH CACHE HIT:", query);
         return parsed;
       }
     }
+
   } catch (error) {
     console.error(
       "SEARCH CACHE READ ERROR:",
@@ -539,20 +627,38 @@ async function searchWeb(
     );
   }
 
+
   if (!env.SERPAPI_API_KEY) {
     throw new Error(
       "SERPAPI_API_KEY is missing"
     );
   }
 
+
   const url = new URL(
     "https://serpapi.org/api/v1/webs-search"
   );
 
-  url.searchParams.set("keyword", query);
-  url.searchParams.set("gl", "JP");
-  url.searchParams.set("hl", "ja");
-  url.searchParams.set("size", "8");
+  url.searchParams.set(
+    "keyword",
+    query
+  );
+
+  url.searchParams.set(
+    "gl",
+    "JP"
+  );
+
+  url.searchParams.set(
+    "hl",
+    "ja"
+  );
+
+  url.searchParams.set(
+    "size",
+    "8"
+  );
+
 
   if (freshness === "day") {
     url.searchParams.set("time", "d");
@@ -566,10 +672,12 @@ async function searchWeb(
     url.searchParams.set("time", "m");
   }
 
+
   url.searchParams.set(
     "token",
     env.SERPAPI_API_KEY
   );
+
 
   const response =
     await fetch(url.toString());
@@ -577,40 +685,42 @@ async function searchWeb(
   const text =
     await response.text();
 
+
   if (!response.ok) {
     throw new Error(
       `Search API ${response.status}: ${text.slice(0, 300)}`
     );
   }
 
+
   let payload;
 
   try {
-    payload = JSON.parse(text);
+    payload =
+      JSON.parse(text);
   } catch {
     throw new Error(
       "Search API returned invalid JSON"
     );
   }
 
-  // ==========================================
-  // 実際に確認できた形式：
-  // data: [...]
-  //
-  // 公式ドキュメント形式：
-  // data: { items: [...] }
-  //
-  // 両方対応
-  // ==========================================
+
   let items = [];
 
-  if (Array.isArray(payload?.data)) {
-    items = payload.data;
-  } else if (
-    Array.isArray(payload?.data?.items)
+  if (
+    Array.isArray(payload?.data)
   ) {
-    items = payload.data.items;
+    items = payload.data;
+
+  } else if (
+    Array.isArray(
+      payload?.data?.items
+    )
+  ) {
+    items =
+      payload.data.items;
   }
+
 
   const results = items
     .filter(
@@ -622,13 +732,17 @@ async function searchWeb(
     .slice(0, 8)
     .map(item => ({
       title:
-        String(item.title || ""),
+        String(
+          item.title || ""
+        ),
+
       link:
         String(
           item.link ||
           item.url ||
           ""
         ),
+
       description:
         String(
           item.description ||
@@ -636,6 +750,7 @@ async function searchWeb(
           item.snippet ||
           ""
         ),
+
       updatedAt:
         String(
           item.updated_at ||
@@ -645,6 +760,7 @@ async function searchWeb(
         )
     }));
 
+
   const result = {
     query,
     freshness,
@@ -653,9 +769,7 @@ async function searchWeb(
       new Date().toISOString()
   };
 
-  // ==========================================
-  // 15分保存
-  // ==========================================
+
   try {
     await env.MEMORY.put(
       cacheKey,
@@ -664,6 +778,7 @@ async function searchWeb(
         expirationTtl: 900
       }
     );
+
   } catch (error) {
     console.error(
       "SEARCH CACHE WRITE ERROR:",
@@ -671,36 +786,22 @@ async function searchWeb(
     );
   }
 
+
   return result;
 }
 
 
 // ==============================================
-// 関西弁チェック
+// 最終品質チェック
 // ==============================================
-function containsKansai(text) {
-  const banned = [
-    "やで",
-    "やん",
-    "せや",
-    "ほんま",
-    "なんでやねん",
-    "できるんや",
-    "あるんや",
-    "なるんや",
-    "してん"
-  ];
+async function finalCheck(
+  text,
+  userMessage,
+  searched,
+  webContext,
+  env
+) {
 
-  return banned.some(
-    word => text.includes(word)
-  );
-}
-
-
-// ==============================================
-// 関西弁が出た時だけ自然に修正
-// ==============================================
-async function fixDialect(text, env) {
   const response = await env.AI.run(
     "@cf/meta/llama-3.2-3b-instruct",
     {
@@ -708,48 +809,113 @@ async function fixDialect(text, env) {
         {
           role: "system",
           content: `
-次の文章の内容・事実・長さを変えず、
-関西弁だけを取り除いてください。
+あなたはLINE AI「ちゃぴ」の最終編集者です。
 
-自然な博多弁の女の子のLINE口調にしてください。
+元回答をチェックし、
+必要な場合だけ修正してください。
 
-自分を指す場合は「ちゃぴ」。
+【絶対条件】
 
-「俺」「僕」は使用禁止。
+名前：
+「ちゃぴ」
 
-禁止：
+自称：
+「ちゃぴ」
+
+自然な博多弁の女の子。
+
+関西弁は禁止。
+
+禁止表現：
+
 やで
 やん
 せや
 ほんま
 なんでやねん
+ええやろ
+ええで
+なんや
 できるんや
 あるんや
 なるんや
+〜へん
+〜してん
 
-自然な博多弁：
-〜ばい
-〜たい
-〜と？
-〜けん
-〜しとる
-よかよ
+これらがあれば必ず自然な博多弁か標準語へ直してください。
 
-方言を無理につけすぎないでください。
+「ちゃび」など名前の誤字は
+「ちゃぴ」に直してください。
 
-修正後の本文だけ返してください。
+【自然さ】
+
+元回答の意味を不必要に変えません。
+
+雑談は短く自然にします。
+
+質問への回答は、
+結論が分かる文章にします。
+
+【Web検索済みの場合】
+
+検索資料に存在しない具体的な事実を
+勝手に追加してはいけません。
+
+特に、
+
+価格
+発売日
+日付
+数字
+仕様
+発表内容
+
+は資料で確認できないなら断定禁止です。
+
+元回答に根拠のない断定があれば削除してください。
+
+【URL】
+
+URLや参考サイト一覧はすべて削除してください。
+
+「参考：」
+「出典：」
+
+なども不要です。
+
+システムが後で自動追加します。
+
+【重要】
+
+説明や採点は返さないでください。
+
+完成したLINE返信本文だけ返してください。
 `
         },
+
         {
           role: "user",
-          content: text
+          content: `
+ユーザー発言：
+${userMessage}
+
+Web検索済み：
+${searched ? "はい" : "いいえ"}
+
+検索資料：
+${searched ? webContext : "なし"}
+
+元回答：
+${text}
+`
         }
       ],
 
       max_tokens: 700,
-      temperature: 0.2
+      temperature: 0.15
     }
   );
+
 
   return (
     extractAIText(response) ||
@@ -759,17 +925,66 @@ async function fixDialect(text, env) {
 
 
 // ==============================================
+// URL等を機械的に除去
+// ==============================================
+function cleanReply(text) {
+
+  let cleaned = text;
+
+  // URL除去
+  cleaned = cleaned.replace(
+    /https?:\/\/[^\s]+/gi,
+    ""
+  );
+
+  // 参考・出典だけの行を除去
+  cleaned = cleaned
+    .split("\n")
+    .filter(line => {
+      const trimmed =
+        line.trim();
+
+      if (
+        /^参考[:：]?$/.test(trimmed) ||
+        /^出典[:：]?$/.test(trimmed) ||
+        /^参考サイト[:：]?$/.test(trimmed)
+      ) {
+        return false;
+      }
+
+      return true;
+    })
+    .join("\n");
+
+  // 念のため代表的な関西弁を機械的補正
+  cleaned = cleaned
+    .replace(/やで[〜～]?/g, "ばい")
+    .replace(/ええやろ[〜～]?/g, "よかろ〜")
+    .replace(/ええで[〜～]?/g, "よかよ")
+    .replace(/ほんま/g, "ほんと")
+    .replace(/せやな/g, "そうやね")
+    .replace(/ちゃび/g, "ちゃぴ");
+
+  return cleaned.trim();
+}
+
+
+// ==============================================
 // 簡易ハッシュ
 // ==============================================
 function simpleHash(text) {
-  let hash = 2166136261;
+
+  let hash =
+    2166136261;
 
   for (
     let i = 0;
     i < text.length;
     i++
   ) {
-    hash ^= text.charCodeAt(i);
+
+    hash ^=
+      text.charCodeAt(i);
 
     hash +=
       (hash << 1) +
@@ -786,9 +1001,10 @@ function simpleHash(text) {
 
 
 // ==============================================
-// AI返答取り出し
+// AI返答取得
 // ==============================================
 function extractAIText(aiResponse) {
+
   if (!aiResponse) return "";
 
   const choiceContent =
@@ -798,12 +1014,14 @@ function extractAIText(aiResponse) {
       ?.message
       ?.content;
 
+
   if (
     typeof choiceContent === "string" &&
     choiceContent.trim()
   ) {
     return choiceContent.trim();
   }
+
 
   if (
     typeof aiResponse?.response === "string" &&
@@ -812,12 +1030,14 @@ function extractAIText(aiResponse) {
     return aiResponse.response.trim();
   }
 
+
   if (
     typeof aiResponse?.result?.response === "string" &&
     aiResponse.result.response.trim()
   ) {
     return aiResponse.result.response.trim();
   }
+
 
   return "";
 }
@@ -831,31 +1051,36 @@ async function replyToLine(
   text,
   env
 ) {
-  const response = await fetch(
-    "https://api.line.me/v2/bot/message/reply",
-    {
-      method: "POST",
 
-      headers: {
-        "Content-Type":
-          "application/json",
+  const response =
+    await fetch(
+      "https://api.line.me/v2/bot/message/reply",
+      {
+        method: "POST",
 
-        Authorization:
-          `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
-      },
+        headers: {
+          "Content-Type":
+            "application/json",
 
-      body: JSON.stringify({
-        replyToken,
+          Authorization:
+            `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`
+        },
 
-        messages: [
-          {
-            type: "text",
-            text: text.slice(0, 5000)
-          }
-        ]
-      })
-    }
-  );
+        body:
+          JSON.stringify({
+            replyToken,
+
+            messages: [
+              {
+                type: "text",
+                text:
+                  text.slice(0, 5000)
+              }
+            ]
+          })
+      }
+    );
+
 
   if (!response.ok) {
     console.error(
